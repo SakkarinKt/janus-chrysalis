@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>janus-chrysalis — Roadmap</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #ffffff; --ink: #1f2430; --muted: #6b7280;
+    --line: #e5e1d8; --accent: #7c5cff; --accent-ink: #5b3df5;
+    --ok: #1a7f5c; --warn: #b45309; --now: #7c5cff;
+    --code-bg: #f3f1ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161c; --panel: #1c1f27; --ink: #e8e6e1; --muted: #9aa1ad;
+      --line: #2c303a; --accent: #9d85ff; --accent-ink: #b3a1ff;
+      --ok: #4fc596; --warn: #e8a04c; --now: #9d85ff;
+      --code-bg: #232733;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.65 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    padding: 3rem 1.25rem 5rem;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 2rem; letter-spacing: -0.02em; }
+  h1 .tag { color: var(--accent-ink); }
+  .sub { color: var(--muted); margin: .5rem 0 0; max-width: 60ch; }
+  .meta { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1.2rem 0 2.5rem; }
+  .chip {
+    font-size: .78rem; padding: .22rem .7rem; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); background: var(--panel);
+  }
+  .chip.now { border-color: var(--now); color: var(--now); font-weight: 600; }
+  h2 { font-size: 1.15rem; margin: 2.6rem 0 1rem; letter-spacing: -0.01em; }
+  h2::before { content: "§ "; color: var(--accent-ink); }
+  .phase {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.1rem 1.3rem; margin-bottom: .8rem; position: relative;
+  }
+  .phase.current { border-color: var(--now); box-shadow: 0 0 0 1px var(--now); }
+  .phase h3 { font-size: 1rem; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .phase h3 .when { font-weight: 400; color: var(--muted); font-size: .82rem; }
+  .status {
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    padding: .1rem .55rem; border-radius: 999px; margin-left: auto;
+  }
+  .status.now { background: var(--now); color: var(--bg); }
+  .status.next { border: 1px solid var(--line); color: var(--muted); }
+  .status.done { background: var(--ok); color: var(--bg); }
+  .phase p, .phase ul { margin: .55rem 0 0; font-size: .93rem; }
+  .phase ul { padding-left: 1.2rem; }
+  .phase li { margin: .25rem 0; }
+  .gate {
+    margin-top: .8rem; padding: .55rem .8rem; border-left: 3px solid var(--accent);
+    background: var(--code-bg); border-radius: 0 8px 8px 0; font-size: .88rem;
+  }
+  .gate b { color: var(--accent-ink); }
+  code {
+    background: var(--code-bg); padding: .12em .38em; border-radius: 5px;
+    font: .85em ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .tablewrap { overflow-x: auto; border-radius: 10px; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: .8rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; font-size: .9rem; }
+  .card h4 { font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-ink); margin-bottom: .4rem; }
+  footer { margin-top: 3.5rem; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="tag">janus-chrysalis</span> · roadmap</h1>
+  <p class="sub">Novel empirical findings on world models in multi-agent RL — trained entirely in JS/TypeScript, co-authored by a human and Claude, advanced daily by an autonomous cloud loop.</p>
+  <div class="meta">
+    <span class="chip now">Now: Phase 1 · Autoresearch</span>
+    <span class="chip">Stack: JS/TS end-to-end</span>
+    <span class="chip">Compute: local Mac + daily cloud loop</span>
+    <span class="chip">License: MIT</span>
+    <span class="chip">Plan v1 · 2026-07-04</span>
+  </div>
+
+  <h2>Phases &amp; gates</h2>
+
+  <div class="phase">
+    <h3>Phase 0 — Repo bootstrap <span class="when">Week 1</span> <span class="status done">done</span></h3>
+    <p>Standalone public repo; MIT (<code>ADR-0001</code>); co-authorship protocol in <code>CONTRIBUTING.md</code>; milestones, labels, issue templates; <code>loop/GOAL.md</code> v1; daily cloud routine scheduled. All non-trivial work lands via PR — even solo.</p>
+  </div>
+
+  <div class="phase current">
+    <h3>Phase 1 — Autoresearch <span class="when">Weeks 1–2</span> <span class="status now">current</span></h3>
+    <ul>
+      <li><b>Literature sweep</b> of MARL world models 2022–2026 (MAMBA, MABL, MARIE, CoDreamer, opponent modeling in latent space, non-stationarity) → <code>notes/lit-map.md</code> + per-paper notes (claims + confidence + bibtex).</li>
+      <li><b>JS ML stack survey</b> → <code>ADR-0002</code>: hypothesis is TF.js (wasm/CPU in Node for training, WebGPU in browser for demo); fallback is a small custom autograd.</li>
+      <li><b>Gap analysis → 3–5 proposals</b> in <code>docs/proposals/</code>: hypothesis, minimal laptop-scale experiment, ablations, success + kill criteria.</li>
+    </ul>
+    <div class="gate"><b>Gate G1</b> — the human rubric-reviews all proposals and picks 1 primary + 1 backup question (<code>ADR-0003</code>). No Phase 2 code before G1.</div>
+  </div>
+
+  <div class="phase">
+    <h3>Phase 2 — Minimal vertical slice <span class="when">Weeks 3–7</span> <span class="status next">next</span></h3>
+    <ul>
+      <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback.</li>
+      <li>Single-agent RSSM in TS on a trivial discrete-action env. Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
+      <li>JSONL telemetry + <code>manifest.json</code> per run — a run without a manifest didn't happen. No dashboard yet.</li>
+    </ul>
+    <div class="gate"><b>Gate G2</b> — loss decreases across 3 seeds; invariant tests green; the human has personally implemented ≥2 modules (replay buffer, λ-returns) with Claude reviewing.</div>
+  </div>
+
+  <div class="phase">
+    <h3>Phase 3 — MARL envs + WM variants <span class="when">Weeks 8–12</span> <span class="status next">next</span></h3>
+    <ul>
+      <li>One deterministic TS particle env (simple-spread-style, 2–3 agents, seeded RNG, pure functions, browser-renderable).</li>
+      <li>Exactly the 2–3 world-model variants the chosen question needs (e.g., independent per-agent WM · shared WM · opponent-latent WM) behind one interface.</li>
+    </ul>
+    <div class="gate"><b>Gate G3</b> — each variant trains NaN-free for 3 seeds; property-based env tests pass; the human implemented one variant's model head.</div>
+  </div>
+
+  <div class="phase">
+    <h3>Phase 4 — Experiments → findings <span class="when">Weeks 13+</span> <span class="status next">next</span></h3>
+    <ul>
+      <li>Reproduction-spec-first: grid, seeds (n ≥ 5), metrics, analysis plan co-signed <em>before</em> long runs. Mean ± std and IQM; baselines get equal tuning budget; figures from committed scripts + CSVs.</li>
+      <li>Artifacts: short-paper/blog writeup · interactive browser demo (trained WM client-side via WebGPU) · tagged v1.0 with reproduction instructions.</li>
+    </ul>
+    <div class="gate"><b>Gate G4 (Skeptic)</b> — adversarial review in a fresh Claude session; BLOCKING/NOTE/NIT severities; failed claims land in Limitations, not silence.</div>
+  </div>
+
+  <h2>The daily loop — Loop Engineering</h2>
+  <div class="cols">
+    <div class="card">
+      <h4>Contract</h4>
+      <code>loop/GOAL.md</code> — standing mission + allow / approve / deny boundaries. Only the human edits it, at phase gates. One bounded increment per run; output is always a PR, never a push to <code>main</code>.
+    </div>
+    <div class="card">
+      <h4>Stand-up (async)</h4>
+      Each run writes <code>reports/standup/YYYY-MM-DD.md</code>: Done · Learned · Blockers · Decisions needed · Tomorrow. The human replies in the PR; the next run reads replies first — that's the meeting.
+    </div>
+    <div class="card">
+      <h4>Graduation levels</h4>
+      <b>L1</b> research/docs only (now) → <b>L2</b> tests + smoke training runs → <b>L3</b> pre-signed experiment grids. Promotion = human decision after ≥3 clean runs. Safety valve: 2 unreviewed stand-ups → loop restricts itself to documentation.
+    </div>
+  </div>
+
+  <h2>Co-authorship protocol</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Mechanism</th><th>Rule</th></tr>
+    <tr><td>ADRs</td><td>Every irreversible decision is a ~15-line ADR merged via a PR the human approves.</td></tr>
+    <tr><td>Explain-before-implement</td><td>Core algorithms get a 1-page explainer first; merge condition = the human summarizes it in their own words in <code>LEARNING.md</code>.</td></tr>
+    <tr><td>Role flips</td><td><code>user-implements</code> issues: human writes the code, Claude reviews. ≥2 per phase. Nobody verifies their own work.</td></tr>
+    <tr><td>Claims</td><td><code>self_checked</code> may inform; only <code>verified</code> may justify decisions or enter the writeup. Every claim ties to an artifact path.</td></tr>
+    <tr><td>Gates</td><td>Claude drafts the rubric; the human executes the review. A phase is done when the human says so.</td></tr>
+  </table></div>
+
+  <h2>Risks</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Risk</th><th>Mitigation</th></tr>
+    <tr><td>TF.js maturity/correctness</td><td>Week-3 spike with hard kill criterion; thin tensor-op boundary so a custom autograd swaps in without touching model code.</td></tr>
+    <tr><td>Laptop performance ceiling</td><td>Small dims (h≈256, z≈32), ≤~50k steps/run, overnight budget; steps/sec measured before committing to the grid.</td></tr>
+    <tr><td>Framework scope creep</td><td>No infrastructure the <em>next</em> experiment doesn't require; dashboard/demo deferred to Phase 4.</td></tr>
+    <tr><td>Question dead on arrival</td><td>Kill criteria in every proposal; backup question pre-selected at G1; a clean negative result with ablations is still a finding.</td></tr>
+    <tr><td>Loop drift</td><td>Bounded increments; GOAL.md boundaries; safety valve after 2 unreviewed stand-ups; graduation levels gate what it may run.</td></tr>
+    <tr><td>Remote env limits (time-boxed, CPU)</td><td>Checkpoint/resume experiments; commit only manifests + summary CSVs.</td></tr>
+  </table></div>
+
+  <h2>First two weeks</h2>
+  <div class="tablewrap"><table>
+    <tr><th>When</th><th>Deliverable</th></tr>
+    <tr><td>W1-S1</td><td>Repo live on GitHub · protocol docs · <code>GOAL.md</code> v1 · daily routine scheduled</td></tr>
+    <tr><td>W1 daily</td><td>Loop runs 1–2: lit-map increments + first stand-ups; human reviews loop behavior closely</td></tr>
+    <tr><td>W1-S2/3</td><td>Deep-research sweep → <code>notes/lit-map.md</code> + per-paper notes</td></tr>
+    <tr><td>W2-S1</td><td>JS ML survey → <code>ADR-0002</code> draft</td></tr>
+    <tr><td>W2-S2</td><td>Gap analysis → 3–5 proposals</td></tr>
+    <tr><td>W2-S3</td><td><b>Gate G1</b>: primary + backup question chosen (<code>ADR-0003</code>) · <code>PLAN.html</code> + <code>GOAL.md</code> updated for Phase 2</td></tr>
+  </table></div>
+
+  <footer>
+    janus-chrysalis · plan v1 · 2026-07-04 · refreshed at each phase gate · decisions live in <code>docs/adr/</code>, this page is the readable front door.
+  </footer>
+</main>
+</body>
+</html>

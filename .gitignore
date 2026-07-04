@@ -1,0 +1,16 @@
+# Dependencies / build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Run outputs: keep only manifests + summary CSVs
+artifacts/**
+!artifacts/**/
+!artifacts/**/manifest.json
+!artifacts/**/*.summary.csv
+
+# Local scratch
+.DS_Store
+*.log
+.env
