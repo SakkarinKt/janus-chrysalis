@@ -1,0 +1,10 @@
+# Code owners for janus-chrysalis.
+# https://docs.github.com/articles/about-code-owners
+#
+# @SakkarinKt is the default owner of everything in the repo. While the
+# `protect-main` ruleset requires 0 approvals (solo maintainer), this file is
+# inert — but the day a second maintainer joins and the ruleset flips to
+# `required_approving_review_count: 1` + `require_code_owner_review: true`,
+# review requests route here automatically.
+
+*       @SakkarinKt
