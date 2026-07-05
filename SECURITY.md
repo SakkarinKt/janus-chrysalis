@@ -21,7 +21,7 @@ issue for a security problem.
 - **Preferred:** use GitHub's
   [Private vulnerability reporting](https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
   on this repository (the **Security → Report a vulnerability** button).
-- **Alternative:** email the maintainer at <whitesee.ws@gmail.com> with
+- **Alternative:** email the maintainer at <sakkarink12@gmail.com> with
   enough detail to reproduce the issue.
 
 Please include: a description, steps to reproduce (or a proof of concept), the
