@@ -49,7 +49,10 @@ Write `reports/standup/YYYY-MM-DD.md` (today's date) and include it in the PR:
 - <or "none">
 
 ## Decisions needed
-- [ ] <each answerable by the human in one line>
+- [ ] <blocking items only — each answerable by the human in one line; leave the box `[ ]`>
+
+## Assumptions made (proceeding unless told otherwise)
+- <non-blocking defaults you chose and acted on, so the human can veto them — or "none">
 
 ## Tomorrow
 - <proposed next increment>
@@ -59,6 +62,11 @@ Write `reports/standup/YYYY-MM-DD.md` (today's date) and include it in the PR:
 ```
 
 A run that produces no PR + report is a failed run. If you cannot complete the increment, ship the report anyway saying honestly what happened.
+
+## Answering "Decisions needed"
+
+- The **human's comment/review is the answer** — a checked box is only bookkeeping and never carries a decision on its own. Judge whether an item is answered by the presence of a human comment/review, **never** by checkbox state, and never tick a "Decisions needed" box yourself (leave every one `[ ]` for the human).
+- **Never self-resolve a "Decisions needed" item.** If it is genuinely the human's call, leave it and do not act. If you can safely proceed with a sensible default, it is not a decision — record it under "Assumptions made (proceeding unless told otherwise)" instead, so the human can veto rather than gate.
 
 ## Safety valve
 
