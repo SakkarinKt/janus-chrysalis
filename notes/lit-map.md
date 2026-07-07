@@ -1,6 +1,6 @@
 # Literature map — world models in multi-agent RL
 
-Status: 10 core papers (9 empirical + 1 proposal-only, see note; 1 of the 9 is single-agent, see note). **10-paper target reached (2026-07-06) — next increment should move to gap-analysis / `docs/proposals/` drafting per `loop/GOAL.md` priority 3.**
+Status: 10 core papers (9 empirical + 1 proposal-only, see note; 1 of the 9 is single-agent, see note). **10-paper target reached (2026-07-06).** **2026-07-07: moved to gap-analysis / proposal drafting per priority 3 — see `docs/proposals/gap-analysis.md` and `docs/proposals/0001-direct-nonstationarity-measurement.md`.** Next lit-map-specific increment (citation-chasing, etc.) resumes only if the proposal work surfaces a specific hole.
 
 **Tooling caveat (2026-07-04/05 autonomous runs):** `WebFetch` returned HTTP 403 for every arXiv URL attempted in the autonomous loop's environment (including a plain `https://example.com` control fetch on 2026-07-04) — an environment/proxy issue specific to that run context, not arXiv-specific blocking and not a hard limit on interactive sessions. Per the human's reply on PR #1, this is treated as a **persistent constraint for autonomous (L1) runs** — primary-source verification passes happen in the human's interactive sessions instead, as one did on 2026-07-05 (see below). Claims from autonomous runs that haven't yet had a primary-source pass stay tagged `self_checked` with confidence capped at `medium` past the abstract/framing level; see each paper note's "Verification note" for its specific status.
 
