@@ -1,7 +1,11 @@
 # Proposal 0001: Directly measuring co-learning non-stationarity across world-model sharing topologies
 
-- **Status**: draft
-- **Author**: Claude (loop run 4, 2026-07-07) · **Reviewed by**: (pending human review)
+- **Status**: draft — full 4-arm sweep design; **L2 promotion requested for a scoped Arm-A
+  instrument-validation milestone only** (see "L2 promotion request" below). Everything else in this
+  document stays L1 (design-only) until that milestone is validated.
+- **Author**: Claude (loop run 4, 2026-07-07; revised run 6, 2026-07-08 per PR #5 review) ·
+  **Reviewed by**: @SakkarinKt (PR #5, 2026-07-07 — approved the core idea, requested the two text
+  fixes below plus this scoped re-proposal before any L2 work starts)
 
 ## Hypothesis
 
@@ -51,12 +55,17 @@ environment and backbone are implemented, since no compute-scale figures could b
 any paper in the map — see each note's "Compute scale" section).
 
 **The measurement intervention** (the actual novel contribution, distinct from the 4 architecture
-arms): partway through training, freeze one agent's policy while the other continues training.
-Track the frozen agent's world-model one-step (and n-step) prediction error on newly collected
-transitions over the following steps. A genuine co-learning non-stationarity signal should show
-this error *rising* as the still-training partner's policy drifts away from what the frozen agent's
-world model was fit to — versus a control condition where both agents are frozen (prediction error
-should stay flat, isolating ordinary evaluation noise from drift-attributable error).
+arms): partway through training, freeze one agent's **policy and world model together** — both
+stop updating — while the partner agent continues training its policy (and, in the independent
+arms, its own separate world model). Freezing the policy alone is not sufficient: if the measured
+agent's world model kept training, it would adapt to the partner's drifting behavior and the signal
+we're trying to isolate would be absorbed into that adaptation rather than showing up as prediction
+error. Track the frozen agent's world-model one-step (and n-step) prediction error on newly
+collected transitions over the following steps. A genuine co-learning non-stationarity signal
+should show this error *rising* as the still-training partner's policy drifts away from what the
+frozen agent's world model was fit to — versus a control condition where **both** agents (policy
+and world model) are frozen, so no partner drift can occur (prediction error should stay flat,
+isolating ordinary evaluation noise from drift-attributable error).
 
 ## Ablations
 
@@ -76,6 +85,24 @@ should stay flat, isolating ordinary evaluation noise from drift-attributable er
   control), tracked over post-freeze steps. Logged per arm × seed; artifacts under
   `experiments/0001/<arm>/<seed>/metrics.json` (path is a plan, not yet created — no experiment
   code exists at L1).
+
+  **Cross-arm definition, made explicit** (this metric must mean the same thing in every arm, or
+  the topology comparison is invalid): "frozen-agent one-step prediction error" is always the
+  prediction error of **the world model responsible for predicting the frozen agent's local
+  observation stream**, evaluated only on transitions collected *after* the freeze point, using the
+  frozen agent's own trajectory. In Arms A–C each agent has its own world-model instance, so this is
+  unambiguous — it is that instance's error. **Arm D has a single parameter-shared world model
+  serving both agents**, so "the frozen agent's world model" means: the shared model's prediction
+  error evaluated specifically on the frozen agent's observation stream (its inputs/targets),
+  holding the model's parameters fixed at the freeze point exactly as in the other arms. The shared
+  model's parameters still drift in Arm D only insofar as the *other* (still-training) agent's
+  experience continues to update the shared weights — which is precisely the topology difference
+  under test (a frozen per-agent model in Arms A–C cannot drift at all post-freeze from either
+  agent's updates, whereas Arm D's nominally-frozen evaluation stream can still be perturbed by the
+  partner's continued updates to the shared weights). This asymmetry is the intended comparison, not
+  a confound to be normalized away — Arm D's whole hypothesis is that shared parameters change this
+  dynamic, so the metric must be left free to reflect that rather than artificially frozen in a way
+  that would erase the effect being measured.
 - **Secondary**: standard return/sample-efficiency curves per arm, for comparability with the
   existing literature's evaluation convention.
 
@@ -107,3 +134,40 @@ combination, most completing well under a full night at this environment's scale
 recalibrated once the environment and backbone exist and an actual wall-clock-per-step figure is
 measured, since no paper in the lit map yielded a confirmed compute-scale number to calibrate
 against in advance (see `notes/lit-map.md`, every paper's "Compute scale" section).
+
+## L2 promotion request — Arm-A instrument-validation milestone (scoped)
+
+Per PR #5 review (@SakkarinKt, 2026-07-07): the full 4-arm sweep is **not** being proposed for L2
+yet. This section proposes a narrower, first milestone — **approval required, not yet acted on**.
+
+**Scope of the request** — build and run only:
+
+1. The grid-world environment (as specified above).
+2. **One** world-model backbone, fixed for the milestone. Blocking dependency: ADR-0002 needs to be
+   settled at least to the point of naming a single backbone choice (see the new `notes/js-ml-stack.md`
+   research below, which advances but does not close that question — the ADR itself still needs
+   human signoff, per `loop/GOAL.md` boundaries).
+3. **Arm A only** (fully independent per-agent world models, no sharing) — the topology point with
+   no cross-agent machinery to build, so it is the cheapest arm that can validate the measurement
+   instrument.
+4. The freeze intervention and both-frozen control, as redefined above (policy **and** world model
+   both frozen).
+
+**Explicitly out of scope for this milestone**: Arms B–D, ablation 3 (replay-reweighting), and the
+full ≥5-seed/40-run sweep. Those stay design-only (L1) until this milestone validates the
+instrument.
+
+**Gate**: this milestone is scoped to directly test **kill criterion #1** — whether the
+both-frozen control's prediction error stays flat (isolating the measurement) rather than drifting
+from stochastic dynamics or capacity noise alone. A pass (flat control) validates the instrument
+and justifies extending to Arms B–D as a follow-up L2 proposal. A fail (control drifts) means the
+measurement methodology needs to be redesigned before any topology comparison is meaningful — per
+kill criterion #1, that redesign happens *before* Arms B–D are attempted, not in parallel with them.
+
+**What "L2" means here in practice**: writing and running experiment code for the first time on
+this project (environment + one backbone + Arm A + the freeze mechanism), under whatever compute
+and safety constraints the human attaches to the promotion. No code exists yet — this section is a
+request to start writing it, not a claim that it has been written.
+
+**Status of this request**: proposed here for human signoff; the loop takes no L2 action (no
+experiment code, no training runs) until approved, per `loop/GOAL.md`'s L1 boundary.
