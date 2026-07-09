@@ -1,11 +1,13 @@
 # Proposal 0001: Directly measuring co-learning non-stationarity across world-model sharing topologies
 
-- **Status**: draft — full 4-arm sweep design; **L2 promotion requested for a scoped Arm-A
-  instrument-validation milestone only** (see "L2 promotion request" below). Everything else in this
-  document stays L1 (design-only) until that milestone is validated.
-- **Author**: Claude (loop run 4, 2026-07-07; revised run 6, 2026-07-08 per PR #5 review) ·
-  **Reviewed by**: @SakkarinKt (PR #5, 2026-07-07 — approved the core idea, requested the two text
-  fixes below plus this scoped re-proposal before any L2 work starts)
+- **Status**: draft — full 4-arm sweep design; **L2 promotion approved for a scoped Arm-A
+  instrument-validation milestone** (PR #7 review, @SakkarinKt, 2026-07-08 — gate revised two-sided,
+  see "L2 promotion request" below). Everything else in this document stays L1 (design-only) until
+  that milestone is validated.
+- **Author**: Claude (loop run 4, 2026-07-07; revised run 6, 2026-07-08 per PR #5 review; revised
+  run 7, 2026-07-09 per PR #7 review) · **Reviewed by**: @SakkarinKt (PR #5, 2026-07-07 — approved
+  the core idea, requested the two text fixes plus this scoped re-proposal; PR #7, 2026-07-08 —
+  approved the scoped re-proposal with a two-sided gate revision)
 
 ## Hypothesis
 
@@ -48,6 +50,17 @@ backbone that ADR settles on keeps this proposal decoupled from the backbone que
   models plus a shared aggregation bottleneck).
 - **Arm D — shared/joint** (`matwm-2025`/`mmsa-2026`-style: single parameter-shared world model,
   decentralized execution).
+
+  **Reviewer note (PR #7, @SakkarinKt, 2026-07-08 — deferred, does not gate the Arm-A milestone):**
+  the cross-arm metric definition below is under-controlled as written for Arm D. Arms A–C measure a
+  static model's error under input drift only; Arm D's shared weights *also* change from the
+  partner's continued updates, so its number conflates two effects — "sharing reduced
+  non-stationarity" and "the partner's updates happened to help/hurt this stream." Fix for the future
+  Arms B–D proposal: add an Arm-D sub-condition with the shared weights frozen at the freeze point
+  (only the partner's data-collection policy drifts, not the shared parameters) — the live-vs-frozen
+  difference then cleanly attributes the parameter-coupling effect. Recorded here for whoever drafts
+  the B–D follow-up; Arm A has no shared model to exercise this, so it does not block the current
+  milestone.
 
 **Training budget per run**: target ≤200K environment steps per arm per seed — small enough for a
 laptop-CPU overnight run at this environment's scale (rough estimate; to be calibrated once the
@@ -157,17 +170,40 @@ yet. This section proposes a narrower, first milestone — **approval required, 
 full ≥5-seed/40-run sweep. Those stay design-only (L1) until this milestone validates the
 instrument.
 
-**Gate**: this milestone is scoped to directly test **kill criterion #1** — whether the
-both-frozen control's prediction error stays flat (isolating the measurement) rather than drifting
-from stochastic dynamics or capacity noise alone. A pass (flat control) validates the instrument
-and justifies extending to Arms B–D as a follow-up L2 proposal. A fail (control drifts) means the
-measurement methodology needs to be redesigned before any topology comparison is meaningful — per
-kill criterion #1, that redesign happens *before* Arms B–D are attempted, not in parallel with them.
+**Gate** (revised per PR #7 review, @SakkarinKt, 2026-07-08 — two-sided, both required):
+
+(a) **Both-frozen control stays flat** — prediction error under the both-frozen control condition
+does not rise beyond a tolerance band set from seed variance (kill criterion #1, unchanged).
+
+(b) **Freeze intervention shows a detectable rising signal on Arm A** — prediction error under the
+freeze intervention (partner still training) rises measurably above the both-frozen control's
+baseline/tolerance band.
+
+Both must pass. (a) alone proves the instrument has no false positives; it does not prove the
+instrument can *detect* drift at all — under the old single-sided gate, a flat control plus a flat
+intervention would also pass, while providing zero evidence the metric is sensitive to the effect it
+exists to measure. That would silently greenlight Arms B–D on a powerless metric.
+
+**Milestone seed count**: 3 seeds (both-frozen control + freeze intervention, Arm A only) — enough
+to estimate seed variance for (a)'s tolerance band and confirm (b)'s effect isn't a single-seed
+fluke, without paying the full sweep's cost. Distinct from the full 4-arm sweep's ≥5-seed target
+("Success criteria" above, unchanged).
+
+A pass on both (a) and (b) validates the instrument and justifies extending to Arms B–D as a
+follow-up L2 proposal. A fail on either means the measurement methodology needs to be redesigned
+before any topology comparison is meaningful — that redesign happens *before* Arms B–D are
+attempted, not in parallel with them.
 
 **What "L2" means here in practice**: writing and running experiment code for the first time on
 this project (environment + one backbone + Arm A + the freeze mechanism), under whatever compute
 and safety constraints the human attaches to the promotion. No code exists yet — this section is a
 request to start writing it, not a claim that it has been written.
 
-**Status of this request**: proposed here for human signoff; the loop takes no L2 action (no
-experiment code, no training runs) until approved, per `loop/GOAL.md`'s L1 boundary.
+**Status of this request**: **approved**, gate revised two-sided per above (PR #7 review,
+@SakkarinKt, 2026-07-08). The backbone dependency (ADR-0002 §6) is separately approved to build
+against as a *fixture*, gated on a short RSSM-vs-SSM/Mamba implementation-robustness note landing
+before the world-model cell itself is written — see `notes/adr-0002-js-ml-stack.md` §7. As of this
+revision the loop has still taken no L2 action (no experiment code, no dependency additions, no
+training runs) — see the run's stand-up report for two open questions (dependency-addition approval
+scope; whether code work starts before or after `loop/GOAL.md`'s status text is updated) before that
+starts.
