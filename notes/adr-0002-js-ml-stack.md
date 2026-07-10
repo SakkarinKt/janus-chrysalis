@@ -128,3 +128,25 @@ backbone) stays a live alternative worth comparing against RSSM once ADR-0002 is
 this note does not attempt that comparison; it only covers the *stack* (TF.js/WebGPU/tfjs-node)
 questions `loop/GOAL.md` priority 4 named, not the *architecture* (RSSM vs. SSM) question, which
 remains open.
+
+## 7. Decision record — approved to build against (not full ADR-0002 signoff)
+
+Per PR #7 review (@SakkarinKt, 2026-07-08), split into two parts:
+
+- **Backend: CPU (`tfjs-node`) or WebGL, not WebGPU — approved unconditionally** for the training
+  path. Rationale given: an asymmetric bet — near-zero cost to avoid WebGPU at this scale, versus
+  catastrophic cost if issue #8590's silent zero-gradient bug (§2) corrupts the drift-attributable
+  error measurement `docs/proposals/0001-direct-nonstationarity-measurement.md` depends on. WebGPU
+  stays live for later inference/rollout use, not training.
+- **Architecture (RSSM from TF.js primitives, §6): approved as a *fixture* for the Arm-A milestone,
+  not as the ADR-0002 decision itself.** One gate attached: **do not write the world-model cell**
+  until a short RSSM-vs-SSM/Mamba (`notes/papers/drama-2024.md`) implementation-robustness note
+  lands — the concern is that a subtle gradient bug in a hand-rolled recurrent cell is the top
+  threat to the measurement's trustworthiness, the same risk class as §2's WebGPU finding. Per the
+  review: the backbone-agnostic parts of the Arm-A milestone (environment, freeze mechanism, metric
+  plumbing, experiment scaffold) can start now; the robustness note can proceed in parallel;
+  converge before the world-model cell itself is written. Does not block starting the milestone's
+  non-backbone work.
+
+**Not yet done**: the RSSM-vs-SSM/Mamba implementation-robustness note itself — flagged as a
+candidate for a near-term increment, separate from this run's processing of the PR #7 reply.
