@@ -1,8 +1,10 @@
 name: CI
 
-# Seed CI for Phase 1 (docs-only). Today it lints Markdown; as executable
-# code lands in Phase 2, add build/test/lint jobs here. The `lint` job's
-# check is the first candidate to require via the `protect-main` ruleset.
+# Seed CI for Phase 1. Markdown lint plus a Node test job for the Arm-A
+# milestone code under src/ and test/ (PR #10). The `lint` job's check was
+# the first candidate required via the `protect-main` ruleset; `test`
+# joins it now that executable code — and an engines-pinned Node version
+# — exist to enforce.
 
 on:
   pull_request:
@@ -24,3 +26,16 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25 # v24.0.0
         with:
           globs: '**/*.md'
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: package.json
+      - name: Run tests
+        run: npm test
