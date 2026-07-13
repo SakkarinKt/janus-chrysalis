@@ -45,11 +45,31 @@ being validated here is the wiring, not a learning effect.
   throwing eagerly on the invalid intervention case (missing index) surfaces a config mistake
   immediately rather than silently freezing nobody.
 - **No metric computation here.** `runEpisode` returns per-step records (`observations`,
-  `actions`, `reward`, `done`, `frozen`) — enough for a future metrics module to filter
-  post-freeze transitions per condition and compute the prediction-error diff proposal `0001`
-  specifies, but it does not compute that diff itself, since there is no world model yet to
+  `nextObservations`, `actions`, `reward`, `done`, `frozen`) — enough for a future metrics module
+  to filter post-freeze transitions per condition and compute the prediction-error diff proposal
+  `0001` specifies, but it does not compute that diff itself, since there is no world model yet to
   measure prediction error against. That is out of scope for this increment (metric plumbing is
   `loop/GOAL.md` priority 2's next sub-step after this one).
+
+## PR #12 review follow-ups (applied / tracked)
+
+- **`observations` was really `nextObservations` (applied this run).** The original field held
+  the post-step observation under the pre-step-sounding name `observations`, forcing a future
+  metrics module to pair each record with its predecessor to recover the pre-step obs — and the
+  very first record's pre-step (reset) observation was never recorded at all. `EpisodeStepRecord`
+  now carries both: `observations` (what each policy acted on, the reset observation for step 1)
+  and `nextObservations` (the post-step observation, renamed from the old field) — matching
+  `Transition`'s `observation`/`nextObservation` naming. Covered by a new chaining test asserting
+  `records[i].observations === records[i - 1].nextObservations`.
+- **"Freeze covers the world model" is structural convention, not an enforced invariant
+  (tracked, not applied this run).** Today `runEpisode` only ever gates `Policy.update()` because
+  that is the only learning hook that exists — there is no world-model update path yet for it to
+  miss. The reviewer's ask is for the *cell's* design to route through this same gate (a single
+  gated update path, or a runner assertion) rather than adding a second, ungated update call.
+  Designing that now would mean guessing the cell's shape before the RSSM-vs-SSM/Mamba
+  robustness note (`notes/papers/drama-2024.md`, still not started) has landed — deferred to when
+  that cell is actually designed, per the reviewer's own "before the cell lands" framing, and
+  recorded here so it isn't lost.
 
 ## What's deliberately not here yet
 
@@ -63,6 +83,8 @@ No world-model backbone, no actual learning (`RandomPolicy.update` doesn't exist
 conditions and its validation throw; `runEpisode`'s wiring using a `CountingPolicy` test double
 that counts and timestamps its own `update()` calls, confirmed against both conditions and against
 no freeze config at all; an end-to-end run with `RandomPolicy` confirming the rollout still
-reaches the environment's configured horizon. `test/agent/policy.test.ts` — `RandomPolicy` always
-returns a valid `Action`, is driven by the passed-in `Rng` (not hidden state), and exposes no
-`update` hook. 12 new tests, 26/26 passing overall (`node --test`).
+reaches the environment's configured horizon; a chaining test (added in the PR #12 follow-up
+above) confirming each record's `observations` equals the prior record's `nextObservations` (and
+the first record's `observations` is the reset observation). `test/agent/policy.test.ts` —
+`RandomPolicy` always returns a valid `Action`, is driven by the passed-in `Rng` (not hidden
+state), and exposes no `update` hook. 27/27 tests passing overall (`node --test`).
