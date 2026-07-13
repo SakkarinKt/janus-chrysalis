@@ -33,7 +33,10 @@ export function isFrozen(agentIndex: number, step: number, config: FreezeConfig)
 
 export interface EpisodeStepRecord {
   step: number;
+  /** Per-agent observation each policy acted on to produce `actions` (the reset observation for step 1). */
   observations: Observation[];
+  /** Per-agent observation after `actions` were applied — what `policy.update()` saw as `nextObservation`. */
+  nextObservations: Observation[];
   actions: Action[];
   reward: number;
   done: boolean;
@@ -85,7 +88,8 @@ export function runEpisode(
 
     records.push({
       step: result.step,
-      observations: result.observations,
+      observations,
+      nextObservations: result.observations,
       actions,
       reward: result.reward,
       done: result.done,

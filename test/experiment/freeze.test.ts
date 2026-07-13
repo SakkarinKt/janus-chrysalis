@@ -114,6 +114,17 @@ test("runEpisode: works end-to-end with RandomPolicy (no update hook) and reache
   assert.equal(records[records.length - 1].done, true);
 });
 
+test("runEpisode: each record's observations is the pre-step obs acted on, nextObservations the post-step obs, chained step to step", () => {
+  const env = new CooperativeGridWorld({ seed: 6, horizon: 5 });
+  const resetObservations = new CooperativeGridWorld({ seed: 6, horizon: 5 }).reset().observations;
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], new Rng(6));
+
+  assert.deepEqual(records[0].observations, resetObservations);
+  for (let i = 1; i < records.length; i++) {
+    assert.deepEqual(records[i].observations, records[i - 1].nextObservations);
+  }
+});
+
 test("runEpisode: wrong number of policies throws", () => {
   const env = new CooperativeGridWorld({ seed: 5, horizon: 3 });
   assert.throws(() => runEpisode(env, [new RandomPolicy()], new Rng(5)));
