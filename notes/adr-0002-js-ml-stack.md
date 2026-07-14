@@ -148,5 +148,10 @@ Per PR #7 review (@SakkarinKt, 2026-07-08), split into two parts:
   converge before the world-model cell itself is written. Does not block starting the milestone's
   non-backbone work.
 
-**Not yet done**: the RSSM-vs-SSM/Mamba implementation-robustness note itself — flagged as a
-candidate for a near-term increment, separate from this run's processing of the PR #7 reply.
+**2026-07-14: gate cleared.** The RSSM-vs-SSM/Mamba implementation-robustness note landed —
+`notes/rssm-vs-ssm-implementation-robustness.md`. Verdict: proceed with RSSM from TF.js primitives
+for the Arm-A milestone's world-model cell (SSM/Mamba's core primitive, a parallel/associative scan,
+doesn't exist anywhere in TF.js, a categorically larger risk than composing RSSM from mature,
+existing ops). Recommends a finite-difference gradient-check test ship with the cell itself. This is
+a `self_checked` recommendation, not a human signoff — flagged as an "Assumption made" in the
+2026-07-14 stand-up rather than gating further, per the note's own closing caveat.

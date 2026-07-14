@@ -207,3 +207,9 @@ revision the loop has still taken no L2 action (no experiment code, no dependenc
 training runs) — see the run's stand-up report for two open questions (dependency-addition approval
 scope; whether code work starts before or after `loop/GOAL.md`'s status text is updated) before that
 starts.
+
+**2026-07-14 update**: environment (PR #10), freeze mechanism (PR #12/#13) landed since this
+revision. The world-model-cell gate itself is now `self_checked`-cleared —
+`notes/rssm-vs-ssm-implementation-robustness.md` recommends proceeding with RSSM from TF.js
+primitives; see `notes/adr-0002-js-ml-stack.md` §7's 2026-07-14 addendum. Metric plumbing and the
+cell itself remain unwritten.
