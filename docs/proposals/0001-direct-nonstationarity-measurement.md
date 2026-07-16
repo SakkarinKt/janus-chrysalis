@@ -213,3 +213,9 @@ revision. The world-model-cell gate itself is now `self_checked`-cleared —
 `notes/rssm-vs-ssm-implementation-robustness.md` recommends proceeding with RSSM from TF.js
 primitives; see `notes/adr-0002-js-ml-stack.md` §7's 2026-07-14 addendum. Metric plumbing and the
 cell itself remain unwritten.
+
+**2026-07-15 update**: PR #14 review (@SakkarinKt, 2026-07-14) approved starting the world-model
+cell, split struct/forward-pass first, then STE + gradient-check. Prerequisite landed first (its own
+PR per `loop/GOAL.md`'s dependency carve-out, not bundled with the cell): `@tensorflow/tfjs-node`
+pinned to `4.22.0` now in `package.json`, smoke-tested — see `notes/adr-0002-js-ml-stack.md` §7's
+2026-07-15 addendum. The cell's struct/forward-pass sub-increment itself is next, still unwritten.

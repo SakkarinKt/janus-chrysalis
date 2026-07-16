@@ -155,3 +155,15 @@ doesn't exist anywhere in TF.js, a categorically larger risk than composing RSSM
 existing ops). Recommends a finite-difference gradient-check test ship with the cell itself. This is
 a `self_checked` recommendation, not a human signoff — flagged as an "Assumption made" in the
 2026-07-14 stand-up rather than gating further, per the note's own closing caveat.
+
+**2026-07-15: dependency landed.** `@tensorflow/tfjs-node` added to `package.json`, pinned exactly to
+`4.22.0` per `loop/GOAL.md`'s pre-approved carve-out (own commit, `package.json` + lockfile +
+`test/smoke/tfjs-node.test.ts`). Smoke-tested successfully on this session's Linux x64 sandbox
+(native binding loads, `tf.getBackend()` reports `"tensorflow"` — the CPU backend, matching §7's
+backend decision; one tensor op runs and returns the correct result). **Not yet confirmed**: the
+Apple Silicon (`darwin-arm64`) install-friction risk flagged in §3 above — this session's environment
+is x64 Linux, so that risk remains unverified until run on the human's actual machine. `npm audit`
+reports 3 high-severity advisories, all transitively via `@mapbox/node-pre-gyp`'s pinned `tar`
+version (used only at install time to fetch the prebuilt native binary, not at runtime) — consistent
+with §1's low-maintenance-cadence finding; `npm audit fix --force` would downgrade
+`@tensorflow/tfjs-node` to `0.1.11`, clearly wrong, so left as-is and flagged rather than acted on.

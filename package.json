@@ -4,9 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=22.18.0 <23"
   },
   "scripts": {
     "test": "node --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "4.22.0"
   }
 }
