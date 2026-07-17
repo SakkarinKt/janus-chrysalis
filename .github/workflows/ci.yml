@@ -1,10 +1,12 @@
 name: CI
 
 # Seed CI for Phase 1. Markdown lint plus a Node test job for the Arm-A
-# milestone code under src/ and test/ (PR #10). The `lint` job's check was
-# the first candidate required via the `protect-main` ruleset; `test`
-# joins it now that executable code — and an engines-pinned Node version
-# — exist to enforce.
+# milestone code under src/ and test/ (PR #10). The `lint` job's check is
+# the current required check in the `protect-main` ruleset. `test` now
+# installs dependencies and passes green (PR #15 review, 99e718d/c0399bc)
+# but is NOT YET added as a required check there — adding it is a
+# repo-settings change outside this loop's write scope (flagged in the
+# 2026-07-16 stand-up for the human to action).
 
 on:
   pull_request:
