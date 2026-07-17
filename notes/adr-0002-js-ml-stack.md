@@ -117,8 +117,9 @@ try `WebFetch` on the specific domain before assuming 403, since `github.com` an
 
 Not a decision (ADR-0002 needs human signoff), but the evidence above supports a **working
 default recommendation** for proposal `0001`'s Arm-A milestone specifically: **RSSM implemented
-from TF.js primitives (custom cell + `tf.customGrad` for the discrete-latent straight-through
-path), trained on the `tfjs-node` (CPU) or WebGL backend, not WebGPU.** This sidesteps §2's
+from TF.js primitives (`tf.layers.gru` for the deterministic recurrence + `tf.stopGradient` for the
+discrete-latent straight-through path), trained on the `tfjs-node` (CPU) or WebGL backend, not
+WebGPU.** This sidesteps §2's
 unresolved recurrent-gradient risk entirely for the milestone that most needs a trustworthy
 measurement, at the cost of slower training than WebGPU could in principle offer — an acceptable
 trade at Arm-A's laptop/CPU scale (`0001` already budgets for CPU-only runs). WebGPU remains worth
@@ -167,3 +168,13 @@ reports 3 high-severity advisories, all transitively via `@mapbox/node-pre-gyp`'
 version (used only at install time to fetch the prebuilt native binary, not at runtime) — consistent
 with §1's low-maintenance-cadence finding; `npm audit fix --force` would downgrade
 `@tensorflow/tfjs-node` to `0.1.11`, clearly wrong, so left as-is and flagged rather than acted on.
+
+**2026-07-17: cell struct/forward-pass landed; §6 wording corrected.** The RSSM cell's
+deterministic-recurrence sub-increment landed — `src/model/rssm.ts`, see
+`docs/explainers/0003-rssm-world-model-cell.md`. §6's decision-record phrase ("custom cell +
+`tf.customGrad` for the discrete-latent straight-through path") is corrected above to
+`tf.stopGradient`, per PR #14's review and matching `notes/rssm-vs-ssm-implementation-robustness.md`
+§4's finding that the straight-through path needs only `stopGradient`, not a custom gradient — the
+stochastic latent/STE code that phrase actually describes is still unwritten (next sub-increment),
+so this is a documentation correction to the standing recommendation, not a record of new code
+using either mechanism.
