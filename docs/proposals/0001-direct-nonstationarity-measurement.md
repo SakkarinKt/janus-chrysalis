@@ -219,3 +219,9 @@ cell, split struct/forward-pass first, then STE + gradient-check. Prerequisite l
 PR per `loop/GOAL.md`'s dependency carve-out, not bundled with the cell): `@tensorflow/tfjs-node`
 pinned to `4.22.0` now in `package.json`, smoke-tested — see `notes/adr-0002-js-ml-stack.md` §7's
 2026-07-15 addendum. The cell's struct/forward-pass sub-increment itself is next, still unwritten.
+
+**2026-07-17 update**: the cell's struct/forward-pass sub-increment landed —
+`src/model/rssm.ts`'s `RSSMCell`, the GRU-based deterministic recurrent state update only (see
+`docs/explainers/0003-rssm-world-model-cell.md`). No stochastic latent, no straight-through
+estimator, no gradient-check test, no wiring into `src/experiment/freeze.ts`'s rollout, and no
+metric computation yet — all still the next sub-increment(s).
