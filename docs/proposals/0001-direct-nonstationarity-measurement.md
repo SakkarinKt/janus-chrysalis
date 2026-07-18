@@ -225,3 +225,10 @@ pinned to `4.22.0` now in `package.json`, smoke-tested — see `notes/adr-0002-j
 `docs/explainers/0003-rssm-world-model-cell.md`). No stochastic latent, no straight-through
 estimator, no gradient-check test, no wiring into `src/experiment/freeze.ts`'s rollout, and no
 metric computation yet — all still the next sub-increment(s).
+
+**2026-07-18 update**: no new cell code this run — processed PR #17's review reply instead (per
+`loop/GOAL.md` priority 1). The reviewer reported `@tensorflow/tfjs-node@4.22.0` (the pinned
+dependency version) fails to install on Apple Silicon (404 on the prebuilt `darwin-arm64` binary,
+no working source fallback); documented in `notes/adr-0002-js-ml-stack.md` §3/§7. Doesn't block
+progress in this project's Linux x64 sandbox, but does block running this milestone's code on the
+human's own machine if it's Apple Silicon — see the 2026-07-18 stand-up's "Decisions needed."

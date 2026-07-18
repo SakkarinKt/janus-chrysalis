@@ -72,6 +72,18 @@ Silicon, confirm `node -p process.arch` reports `arm64` (not `x64` under Rosetta
 `tfjs-node`'s native bindings, and expect to possibly need a from-source build depending on the
 installed Node version. Worth a smoke-test as part of Arm-A milestone setup, not before.
 
+**2026-07-18 update [high, human-reported, PR #17 review]**: no longer a "history of friction"
+concern — confirmed broken on the pinned version. `@tensorflow/tfjs-node@4.22.0` fails to install
+on Apple Silicon: 404 on the prebuilt `napi-v8/4.22.0` `darwin-arm64` binary, and no working
+source fallback (per @SakkarinKt's PR #17 review, run on real Apple Silicon hardware — this
+project's sandboxed sessions are x64 Linux and cannot reproduce or independently verify the 404
+directly). This is a harder finding than the community-issue survey above: it means the *exact
+pinned version this repo depends on* (§7's `4.22.0` pin) is currently unusable on `darwin-arm64`,
+not just historically friction-prone on some past versions. Flagged by the reviewer as "worth a
+future increment to pin/patch or document a workaround before the cell work depends on running it
+on-device" — not actioned in this note; see the 2026-07-18 stand-up for scoping notes on why a fix
+attempt was deferred rather than started blind in an environment that can't reproduce the failure.
+
 ## 4. Custom-autograd feasibility for the RSSM op set
 
 **[medium, self_checked]** `tf.customGrad()` is a real, documented, stable TF.js API (`tensorflow.org/js/guide/custom_ops_kernels_gradients`,
@@ -178,3 +190,14 @@ deterministic-recurrence sub-increment landed — `src/model/rssm.ts`, see
 stochastic latent/STE code that phrase actually describes is still unwritten (next sub-increment),
 so this is a documentation correction to the standing recommendation, not a record of new code
 using either mechanism.
+
+**2026-07-18: Apple Silicon install risk upgraded from "friction-prone" to "confirmed broken."**
+Per PR #17's review, `@tensorflow/tfjs-node@4.22.0` (the exact version pinned in `package.json`)
+404s on its prebuilt `darwin-arm64` binary with no working source fallback — see §3's updated
+entry. This doesn't affect the Arm-A milestone's progress in this Linux x64 sandbox, but it is a
+known blocker for running any of this code on the human's actual (assumed Apple Silicon) machine.
+Not fixed this run — no `darwin-arm64` environment is available here to develop or test a
+pin/patch/workaround against, and guessing at one blind (e.g. bumping to an untested newer
+version, which would violate §7's `4.22.0` pin rationale) risks a worse outcome than leaving it
+documented and open. Flagged for the human in the 2026-07-18 stand-up, since attempting a fix
+without a way to verify it is a judgment call this loop shouldn't make unilaterally.
