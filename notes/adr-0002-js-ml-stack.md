@@ -84,6 +84,50 @@ future increment to pin/patch or document a workaround before the cell work depe
 on-device" — not actioned in this note; see the 2026-07-18 stand-up for scoping notes on why a fix
 attempt was deferred rather than started blind in an environment that can't reproduce the failure.
 
+**2026-07-19 update [high, self_checked, primary-source]**: PR #18's review named a concrete next
+step — "a dependency PR bumping to a tfjs-node version that ships a darwin-arm64 prebuilt —
+findable by probing the same pre-built-binary/napi-v{N}/{version}/CPU-darwin-\* path across
+versions." Ran that probe this session (network reachable to `storage.googleapis.com` from this
+sandbox; verified against the GCS JSON list API, not just individual HEAD requests, so this is an
+exhaustive listing rather than a sample):
+
+- Read `@tensorflow/tfjs-node`'s own install machinery (`node_modules/@tensorflow/tfjs-node/scripts/{deps-constants,get-addon-name,install}.js`
+  after a fresh `npm ci`) rather than guessing the URL shape: the native addon filename never
+  encodes CPU architecture (`CPU-darwin-{version}.tar.gz`, identical for Intel and Apple Silicon
+  Macs) — only `libtensorflow` (the C shared library, downloaded separately via a hardcoded
+  special-case URL in `install.js`) has an arm64-specific path. So "darwin-arm64 binary" in the
+  PR #17 finding is shorthand for a `darwin`-wide addon, not an arm64-only gap.
+- Confirmed this sandbox's `process.versions.napi` is `10` (Node v22.22.2), and that `npm ci` here
+  resolved to `lib/napi-v8` — i.e. node-pre-gyp picks the *highest declared `napi_versions` entry
+  ≤ the runtime's napi version*, not the runtime version itself. `@tensorflow/tfjs-node`'s
+  `package.json` has declared `napi_versions: [3,4,5,6,7,8]` for years (checked `3.6.1` through
+  `4.22.0` — identical array every time), so on any Node ≥ napi-8 runtime (this repo's
+  `engines.node` pin, `>=22.18.0 <23`, is comfortably in that range) the addon request always
+  targets `napi-v8`, regardless of which `tfjs-node` version is pinned.
+- Queried the bucket's public list API (`storage.googleapis.com/storage/v1/b/tf-builds/o?prefix=...`)
+  for `pre-built-binary/napi-v8/`: **90 objects total, 88 linux, 1 windows, 0 darwin — across every
+  `tfjs-node` version ever built at that napi tier**, not just `4.22.0`. Cross-checked `napi-v3`
+  through `napi-v7`: darwin addons exist there (e.g. `napi-v7/3.6.1/CPU-darwin-3.6.1.tar.gz`), but
+  **`3.6.1` (pinned to the long-superseded `@tensorflow/tfjs@3.6.0`, 2021) is the newest version
+  with *any* darwin addon anywhere in the bucket** — every version from `3.7.0` onward through the
+  current `4.23.0-rc.0` has zero darwin coverage at its declared napi tier.
+
+**Conclusion: the "bump the version" fix PR #18 suggested does not exist.** This isn't a
+`4.22.0`-specific regression — darwin native-addon prebuilts were dropped from the project's build
+pipeline project-wide once it moved past napi-v7 (mid-2021) and never came back, for Intel and
+Apple Silicon alike. Pinning to an older version with darwin coverage (`3.6.1`) isn't viable either:
+this repo's Node requirement (§7, `engines.node >=22.18.0`) reports napi 10, so node-pre-gyp would
+still request `napi-v8` for that old version too, and `napi-v8` has no darwin build regardless of
+which `tfjs-node` release declares it. The only paths left, neither actionable from this sandbox:
+(a) get `node-pre-gyp install --fallback-to-build` (a from-source compile via `node-gyp` against
+the arm64 `libtensorflow` that *does* download fine) working on the human's actual hardware — this
+is the path PR #17's review already reported failing, so "why" is the open question, not "whether
+to bump a version"; or (b) switch the Apple Silicon path specifically to the pure-JS
+`@tensorflow/tfjs` package (no native addon, WebGL/CPU-JS backend) as a platform-specific fallback
+— a real architecture change to §7's backend decision, needing its own approval, not something
+this note resolves. Recorded as a "Decisions needed" item in the 2026-07-19 stand-up rather than
+picked unilaterally.
+
 ## 4. Custom-autograd feasibility for the RSSM op set
 
 **[medium, self_checked]** `tf.customGrad()` is a real, documented, stable TF.js API (`tensorflow.org/js/guide/custom_ops_kernels_gradients`,
@@ -201,3 +245,14 @@ pin/patch/workaround against, and guessing at one blind (e.g. bumping to an unte
 version, which would violate §7's `4.22.0` pin rationale) risks a worse outcome than leaving it
 documented and open. Flagged for the human in the 2026-07-18 stand-up, since attempting a fix
 without a way to verify it is a judgment call this loop shouldn't make unilaterally.
+
+**2026-07-19: version-bump path ruled out by data, not just deferred.** Per PR #18's review
+suggestion, probed the `tf-builds` GCS bucket's prebuilt-binary listing exhaustively (see §3's
+2026-07-19 entry for method and full evidence) rather than guessing at a fix. Finding: no
+`tfjs-node` version — past, current, or the `4.23.0-rc.0` pre-release — has a working darwin addon
+at the `napi-v8` tier this repo's Node pin always resolves to; darwin support was dropped
+project-wide after `3.6.1` (2021) and never restored, for both Intel and Apple Silicon. A version
+bump is not a candidate fix. The remaining two paths (from-source build on real hardware, or a
+platform-specific pure-JS `@tensorflow/tfjs` fallback) are recorded as a "Decisions needed" item
+in the 2026-07-19 stand-up rather than chosen here — the first needs the human's own machine to
+debug, the second is a backend-decision change this note isn't scoped to make.
