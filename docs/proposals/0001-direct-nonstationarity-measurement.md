@@ -232,3 +232,12 @@ dependency version) fails to install on Apple Silicon (404 on the prebuilt `darw
 no working source fallback); documented in `notes/adr-0002-js-ml-stack.md` §3/§7. Doesn't block
 progress in this project's Linux x64 sandbox, but does block running this milestone's code on the
 human's own machine if it's Apple Silicon — see the 2026-07-18 stand-up's "Decisions needed."
+
+**2026-07-19 update**: no new cell code this run either — processed PR #18's review reply (per
+`loop/GOAL.md` priority 1), which named a concrete next step for the install failure: probe
+`tfjs-node` versions for one with a working darwin prebuilt. Ran that probe; the answer is that no
+such version exists at this repo's Node/napi tier (darwin support was dropped from the whole
+project after a 2021-era release and never restored) — see `notes/adr-0002-js-ml-stack.md` §3/§7's
+2026-07-19 entries for the full evidence. Doesn't change this sandbox's progress, but narrows the
+Apple Silicon path to two options needing a human decision — see the 2026-07-19 stand-up's
+"Decisions needed."
