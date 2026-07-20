@@ -256,3 +256,33 @@ bump is not a candidate fix. The remaining two paths (from-source build on real 
 platform-specific pure-JS `@tensorflow/tfjs` fallback) are recorded as a "Decisions needed" item
 in the 2026-07-19 stand-up rather than chosen here — the first needs the human's own machine to
 debug, the second is a backend-decision change this note isn't scoped to make.
+
+**2026-07-20: §4/§6's `tf.stopGradient` claim doesn't hold up — corrected to `tf.customGrad`, and
+the stochastic latent landed.** Per PR #19's review ("resume the RSSM cell increment: prior/posterior
+heads, straight-through categorical sampling, gradient-check test"), that sub-increment landed —
+`src/model/rssm.ts`'s `RSSMCell.prior()`/`.posterior()` heads and `straightThroughEstimator()`, tested
+in `test/model/rssm.test.ts` (44/44 passing). While implementing it: **`tf.stopGradient` does not
+exist as a public function on `@tensorflow/tfjs-node@4.22.0`, `@tensorflow/tfjs-core@4.22.0`, or
+`@tensorflow/tfjs@4.22.0`** — confirmed directly (`typeof tf.stopGradient === "undefined"` on all
+three, and calling it throws `tf.stopGradient is not a function`), not by a documentation/search
+claim. This contradicts §4's "a native, stable TF.js primitive... confirmed present" and the
+2026-07-17 entry that corrected §6's wording *to* `tf.stopGradient` — both claims trace back to
+`WebSearch`-only verification (§4 says the guide page itself 403'd on `WebFetch`), which evidently
+wasn't sufficient here; this is the first point in the ADR-0002 research thread where a claim was
+checked by actually running the pinned dependency's code rather than searching about it, and it
+didn't hold. §4's and §6's `tf.stopGradient` language is superseded by this entry, not edited in
+place, to keep the correction visible rather than silently rewriting history.
+
+**The fix**: `tf.customGrad()` (§4 already correctly identifies this as "a real, documented, stable
+TF.js API" and "the mechanism the RSSM op set would lean on for... straight-through gradients" as
+one of two options) is what `straightThroughEstimator()` actually uses — confirmed present and
+working on all three packages. Implementation note beyond the stopGradient swap: naive
+finite-difference gradient-checking cannot validate a straight-through estimator against its *own*
+forward pass, since that forward value (the hard sample) is piecewise-constant in the logits by
+construction — `(f(x+e) - f(x-e))/2e` is identically zero regardless of correctness. The
+finite-difference check in `test/model/rssm.test.ts` instead targets `softmax(logits)` directly
+(what the estimator's backward pass is defined to reproduce), with a companion test asserting the
+naive check *is* identically zero, so the reason for the indirection is pinned down rather than
+just asserted in a comment. `notes/rssm-vs-ssm-implementation-robustness.md` §5's gradient-check
+recommendation is satisfied by this test, but its "needs only `tf.stopGradient`" framing (§4 of that
+note) inherits the same correction.

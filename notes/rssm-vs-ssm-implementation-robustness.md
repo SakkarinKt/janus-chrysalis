@@ -107,3 +107,15 @@ enough to actually unblock cell-writing, or whether the human wants a closer loo
 finite-difference smoke test against a toy GRU + straight-through composition) before treating the
 gate as cleared. Flagged as an "Assumption made" in this run's stand-up rather than a "Decision
 needed," since the note's own conclusion is a bounded default the human can veto.
+
+## Correction (2026-07-20): §4's "needs only `tf.stopGradient`" doesn't hold for this pinned version
+
+**[high, self_checked]** §4 above states the straight-through path "needs only `tf.stopGradient`,
+which is a native, stable TF.js primitive." Writing `src/model/rssm.ts`'s
+`straightThroughEstimator()` against the actual pinned `@tensorflow/tfjs-node@4.22.0` found this
+false: `tf.stopGradient` is not a function on that package (nor `tfjs-core`/`tfjs`, same version) —
+confirmed by running it, not by search. `tf.customGrad` (available and confirmed working) is the
+actual mechanism used; see `notes/adr-0002-js-ml-stack.md`'s 2026-07-20 entry for the full
+correction and implementation notes. §4's core conclusion — the straight-through path needs no
+*novel numerical kernel*, just composing existing stable ops — still holds; only the specific op
+name was wrong.
