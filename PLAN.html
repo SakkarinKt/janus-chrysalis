@@ -107,7 +107,7 @@
     <h3>Phase 2 — Minimal vertical slice <span class="when">Weeks 3–7</span> <span class="status now">current</span></h3>
     <ul>
       <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback.</li>
-      <li>Single-agent RSSM in TS on a trivial discrete-action env. Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
+      <li>RSSM world-model cell in TS on a small 2-agent discrete-action gridworld — proposal <code>0001</code>'s Arm-A instrument (see <code>loop/GOAL.md</code>). Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
       <li>JSONL telemetry + <code>manifest.json</code> per run — a run without a manifest didn't happen. No dashboard yet.</li>
     </ul>
     <div class="gate"><b>Gate G2</b> — loss decreases across 3 seeds; invariant tests green; the human has personally implemented ≥2 modules (replay buffer, λ-returns) with Claude reviewing.</div>
