@@ -79,11 +79,11 @@
   <h1><span class="tag">janus-chrysalis</span> · roadmap</h1>
   <p class="sub">Novel empirical findings on world models in multi-agent RL — trained entirely in JS/TypeScript, co-authored by a human and Claude, advanced daily by an autonomous cloud loop.</p>
   <div class="meta">
-    <span class="chip now">Now: Phase 1 · Autoresearch</span>
+    <span class="chip now">Now: Phase 2 · Minimal vertical slice</span>
     <span class="chip">Stack: JS/TS end-to-end</span>
     <span class="chip">Compute: local Mac + daily cloud loop</span>
     <span class="chip">License: MIT</span>
-    <span class="chip">Plan v1 · 2026-07-04</span>
+    <span class="chip">Plan v1.1 · G1 2026-07-20</span>
   </div>
 
   <h2>Phases &amp; gates</h2>
@@ -93,21 +93,21 @@
     <p>Standalone public repo; MIT (<code>ADR-0001</code>); co-authorship protocol in <code>CONTRIBUTING.md</code>; milestones, labels, issue templates; <code>loop/GOAL.md</code> v1; daily cloud routine scheduled. All non-trivial work lands via PR — even solo.</p>
   </div>
 
-  <div class="phase current">
-    <h3>Phase 1 — Autoresearch <span class="when">Weeks 1–2</span> <span class="status now">current</span></h3>
+  <div class="phase">
+    <h3>Phase 1 — Autoresearch <span class="when">Weeks 1–2</span> <span class="status done">done</span></h3>
     <ul>
       <li><b>Literature sweep</b> of MARL world models 2022–2026 (MAMBA, MABL, MARIE, CoDreamer, opponent modeling in latent space, non-stationarity) → <code>notes/lit-map.md</code> + per-paper notes (claims + confidence + bibtex).</li>
       <li><b>JS ML stack survey</b> → <code>ADR-0002</code>: hypothesis is TF.js (wasm/CPU in Node for training, WebGPU in browser for demo); fallback is a small custom autograd.</li>
       <li><b>Gap analysis → 3–5 proposals</b> in <code>docs/proposals/</code>: hypothesis, minimal laptop-scale experiment, ablations, success + kill criteria.</li>
     </ul>
-    <div class="gate"><b>Gate G1</b> — the human rubric-reviews all proposals and picks 1 primary + 1 backup question (<code>ADR-0003</code>). No Phase 2 code before G1.</div>
+    <div class="gate"><b>Gate G1 — passed 2026-07-20</b> (<code>ADR-0003</code>): primary = proposal <code>0001</code> (direct non-stationarity measurement); backup = <code>0001</code>'s comms-content pivot (raw latent vs. compressed self-intention, topology held at Arm B). Deviation recorded in the ADR: 1 proposal drafted, not 3–5 — the instrument-first design means the backup shares the apparatus.</div>
   </div>
 
-  <div class="phase">
-    <h3>Phase 2 — Minimal vertical slice <span class="when">Weeks 3–7</span> <span class="status next">next</span></h3>
+  <div class="phase current">
+    <h3>Phase 2 — Minimal vertical slice <span class="when">Weeks 3–7</span> <span class="status now">current</span></h3>
     <ul>
       <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback.</li>
-      <li>Single-agent RSSM in TS on a trivial discrete-action env. Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
+      <li>RSSM world-model cell in TS on a small 2-agent discrete-action gridworld — proposal <code>0001</code>'s Arm-A instrument (see <code>loop/GOAL.md</code>). Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
       <li>JSONL telemetry + <code>manifest.json</code> per run — a run without a manifest didn't happen. No dashboard yet.</li>
     </ul>
     <div class="gate"><b>Gate G2</b> — loss decreases across 3 seeds; invariant tests green; the human has personally implemented ≥2 modules (replay buffer, λ-returns) with Claude reviewing.</div>
@@ -143,7 +143,7 @@
     </div>
     <div class="card">
       <h4>Graduation levels</h4>
-      <b>L1</b> research/docs only (now) → <b>L2</b> tests + smoke training runs → <b>L3</b> pre-signed experiment grids. Promotion = human decision after ≥3 clean runs. Safety valve: 2 unreviewed stand-ups → loop restricts itself to documentation.
+      <b>L1</b> research/docs only → <b>L2</b> tests + smoke training runs (now — Phase-2 vertical-slice scope in <code>loop/GOAL.md</code>) → <b>L3</b> pre-signed experiment grids. Promotion = human decision after ≥3 clean runs. Safety valve: 2 unreviewed stand-ups → loop restricts itself to documentation.
     </div>
   </div>
 
@@ -176,11 +176,11 @@
     <tr><td>W1-S2/3</td><td>Deep-research sweep → <code>notes/lit-map.md</code> + per-paper notes</td></tr>
     <tr><td>W2-S1</td><td>JS ML survey → <code>ADR-0002</code> draft</td></tr>
     <tr><td>W2-S2</td><td>Gap analysis → 3–5 proposals</td></tr>
-    <tr><td>W2-S3</td><td><b>Gate G1</b>: primary + backup question chosen (<code>ADR-0003</code>) · <code>PLAN.html</code> + <code>GOAL.md</code> updated for Phase 2</td></tr>
+    <tr><td>W2-S3</td><td><b>Gate G1</b>: primary + backup question chosen (<code>ADR-0003</code>) · <code>PLAN.html</code> + <code>GOAL.md</code> updated for Phase 2 · <b>✓ done 2026-07-20</b></td></tr>
   </table></div>
 
   <footer>
-    janus-chrysalis · plan v1 · 2026-07-04 · refreshed at each phase gate · decisions live in <code>docs/adr/</code>, this page is the readable front door.
+    janus-chrysalis · plan v1.1 · 2026-07-04 · G1 refresh 2026-07-20 · refreshed at each phase gate · decisions live in <code>docs/adr/</code>, this page is the readable front door.
   </footer>
 </main>
 </body>

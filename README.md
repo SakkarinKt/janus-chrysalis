@@ -17,7 +17,9 @@ Three things make it unusual:
 
 ## Status
 
-**Phase 1 — Autoresearch** (literature sweep → gap analysis → research proposals → question selection at Gate G1).
+**Phase 2 — Minimal vertical slice** (stack-validation spike → RSSM training path → Arm-A instrument validation, toward Gate G2).
+
+Gate G1 passed 2026-07-20: primary question = [proposal 0001](docs/proposals/0001-direct-nonstationarity-measurement.md) (directly measuring co-learning non-stationarity across world-model sharing topologies); backup = its comms-content pivot — see [ADR-0003](docs/adr/0003-gate-g1-research-question-selection.md).
 
 See [PLAN.html](PLAN.html) for the full roadmap, phases, and gates.
 
