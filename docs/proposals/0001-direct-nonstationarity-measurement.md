@@ -1,9 +1,11 @@
 # Proposal 0001: Directly measuring co-learning non-stationarity across world-model sharing topologies
 
-- **Status**: draft — full 4-arm sweep design; **L2 promotion approved for a scoped Arm-A
-  instrument-validation milestone** (PR #7 review, @SakkarinKt, 2026-07-08 — gate revised two-sided,
-  see "L2 promotion request" below). Everything else in this document stays L1 (design-only) until
-  that milestone is validated.
+- **Status**: **selected-primary** — Gate G1
+  (`docs/adr/0003-gate-g1-research-question-selection.md`, 2026-07-20); backup = this proposal's
+  comms-content pivot (see kill criteria). History: draft, full 4-arm sweep design, with **L2
+  promotion approved for a scoped Arm-A instrument-validation milestone** (PR #7 review,
+  @SakkarinKt, 2026-07-08 — gate revised two-sided, see "L2 promotion request" below). Everything
+  beyond the Phase-2 vertical-slice scope now defined in `loop/GOAL.md` stays gated (design-only).
 - **Author**: Claude (loop run 4, 2026-07-07; revised run 6, 2026-07-08 per PR #5 review; revised
   run 7, 2026-07-09 per PR #7 review) · **Reviewed by**: @SakkarinKt (PR #5, 2026-07-07 — approved
   the core idea, requested the two text fixes plus this scoped re-proposal; PR #7, 2026-07-08 —
@@ -138,6 +140,7 @@ variance is known) without requiring a topology change.
   detectable effect of sharing), switch to the backup question: comms-*content* as the independent
   variable (raw latent state vs. compressed self-intention, per `plans-not-percepts-2025` and
   `codreamer-2024` — see gap-analysis §1.3), holding topology fixed at Arm B instead.
+  **This pivot is the designated G1 backup question** (ADR-0003, 2026-07-20).
 
 ## Estimated cost
 
