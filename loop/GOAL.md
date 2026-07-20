@@ -8,35 +8,77 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
 
 ## Current status
 
-- **Phase**: 1 — Autoresearch (literature sweep → gap analysis → research proposals → Gate G1)
-- **Loop level**: **L2 (Arm-A milestone only) — research, documentation, and the Arm-A validation-milestone code path.** Promoted per PR #7 review (@SakkarinKt, 2026-07-08) and PR #8 reply (2026-07-10). Under this promotion you **may** write and run the Arm-A milestone's code — environment, freeze mechanism, metric plumbing, experiment scaffold, and (once its gate is cleared, see below) the world-model cell — at the validation-milestone scale defined in `docs/proposals/0001-direct-nonstationarity-measurement.md`. Everything else stays **L1**: the full Arm-A sweep (≥5 seeds), Arms B–D, and any run beyond the validation milestone remain gated and need a fresh promotion. Level promotions are the human's call, recorded in a stand-up reply and reflected here.
-  - **World-model-cell gate (from PR #7 / ADR-0002 §7):** do **not** write the RSSM world-model cell until the short RSSM-vs-SSM/Mamba (`notes/papers/drama-2024.md`) implementation-robustness note lands. The backbone-agnostic scaffold (env, freeze, metric plumbing) is **not** gated by this and can start now; the robustness note can proceed in parallel; converge before the cell is written.
+- **Phase**: 2 — Minimal vertical slice (weeks 3–7). Gate G1 passed 2026-07-20
+  (`docs/adr/0003-gate-g1-research-question-selection.md`): primary question = proposal `0001`
+  (direct non-stationarity measurement); backup = `0001`'s comms-content pivot (same apparatus,
+  only the independent variable changes). Stack decisions are formalized in
+  `docs/adr/0002-js-ml-stack.md`.
+- **Loop level**: **L2 (Phase-2 vertical slice)** — promoted at Gate G1 (this file's v2, updated by
+  the human via the gate PR's review + merge). Under this promotion you **may** build and smoke-run
+  the Phase-2 vertical slice per `PLAN.html` Phase 2 and proposal `0001`'s Arm-A milestone: the
+  stack-validation spike, RSSM completion (losses + rollout wiring), Arm-A metric plumbing, the
+  3-seed instrument validation, JSONL telemetry + manifests, and the invariant tests. A
+  training/smoke run without a `manifest.json` didn't happen.
+- **Reserved for the human (Gate G2 role-flip)**: the replay buffer and λ-returns modules. You may
+  draft their interfaces, specs, and test skeletons, but **must not implement** them — they are the
+  human's `user-implements` modules with you reviewing.
+- **Still gated (fresh promotion needed)**: the full ≥5-seed Arm-A sweep, Arms B–D, ablation 3
+  (replay-reweighting), dashboards/demo, and any run beyond the 3-seed validation scale.
 
-## Today's increment (Phase 1 / L2-Arm-A)
+## Today's increment (Phase 2 / L2-P2-slice)
 
 Pick **one** bounded increment, in priority order:
 
-1. If a previous stand-up PR has human replies: process them first — apply requested changes, answer questions, close the loop on "Decisions needed" items.
-2. **Arm-A milestone, backbone-agnostic scaffold** (now authorized, L2-Arm-A): environment, freeze mechanism, metric plumbing, and experiment scaffold per `docs/proposals/0001-direct-nonstationarity-measurement.md`. First code lands as a normal loop PR for review. Keep each run to one bounded increment (e.g. environment first, freeze mechanism next).
-3. **RSSM-vs-SSM/Mamba implementation-robustness note** (unblocks the world-model cell): the short note ADR-0002 §7 requires before the RSSM cell is written. Can proceed in parallel with (2).
-4. Extend the literature map (`notes/lit-map.md`): research 2–4 papers on MARL world models 2022–2026 (seed areas: MAMBA, MABL, MARIE, CoDreamer, model-based MARL, opponent modeling in latent space, non-stationarity in learned dynamics; follow citations outward). For each: one `notes/papers/<key>.md` in Archivist format — claims with confidence (`high/medium/low`), method summary, compute scale, bibtex. Tag everything `self_checked`.
-5. Once the lit map covers ≥10 core papers: draft or refine gap-analysis notes and research-proposal drafts in `docs/proposals/` using `docs/proposals/TEMPLATE.md`.
-6. JS ML stack notes toward ADR-0002: TF.js maintenance status, WebGPU maturity, tfjs-node on Apple Silicon, custom-autograd feasibility for the RSSM op set. Notes only — the ADR itself needs human signoff.
+1. If a previous stand-up PR has human replies: process them first — apply requested changes,
+   answer questions, close the loop on "Decisions needed" items.
+2. **Week-3 stack-validation spike** (per `PLAN.html` Phase 2 and ADR-0002 decision 5): extend the
+   landed straight-through gradient-check to end-to-end training-step gradient correctness vs.
+   finite differences, and measure steps/sec on `tfjs-node` CPU at Arm-A dims. If the hard kill
+   criterion trips, do **not** start a custom autograd — raise it as a "Decisions needed" item (it
+   supersedes ADR-0002).
+3. **RSSM completion**: the world-model losses (KL balancing with a free-bits floor, observation
+   reconstruction) and wiring `RSSMCell` into `src/experiment/freeze.ts`'s rollout. (The stochastic
+   latent, straight-through estimator, and gradient-check landed via PR #20.)
+   Explainer-before-implement applies to each new core piece.
+4. **Arm-A metric plumbing + instrument validation**: the drift-attributable-error metric, then the
+   3-seed freeze-vs-both-frozen validation runs against proposal `0001`'s two-sided gate.
+5. **Vertical-slice hardening**: JSONL telemetry + `manifest.json` per run; invariant tests (KL
+   free-bits floor, WM/AC gradient separation, NaN → graceful halt, continue/termination head).
+6. Interface/spec/test skeletons for the human's G2 modules (replay buffer, λ-returns) — spec only,
+   never the implementation.
 
 ## Boundaries
 
 **Allowed (do autonomously):**
-- Read anything in the repo; web research; write/edit files under `notes/`, `docs/proposals/` (drafts), `reports/standup/`, `loop/` *except* `GOAL.md`.
-- Create a branch `loop/YYYY-MM-DD`, commit with conventional commits, push, open or update one PR per run.
+
+- Read anything in the repo; web research; write/edit files under `notes/`, `docs/proposals/`
+  (drafts), `docs/explainers/`, `reports/standup/`, `loop/` *except* `GOAL.md`, and — new at this
+  level — `src/`, `test/`, `experiments/`, within the vertical-slice scope above.
+- Run `npm test` and bounded smoke/validation training runs up to the 3-seed
+  instrument-validation scale (every run writes JSONL + `manifest.json`; commit only manifests +
+  summary artifacts).
+- Create a branch `loop/YYYY-MM-DD`, commit with conventional commits, push, open or update one PR
+  per run.
 
 **Approval required (propose in the PR, do not do):**
-- Merging anything to `main`; creating or modifying ADRs beyond draft notes; changing `PLAN.html`, `README.md`, `CONTRIBUTING.md`; adding dependencies; any training/experiment runs beyond the L2-Arm-A milestone scope above; creating issues/milestones.
+
+- Merging anything to `main`; creating or modifying ADRs beyond draft notes; changing `PLAN.html`,
+  `README.md`, `CONTRIBUTING.md`; adding dependencies; implementing the human-reserved G2 modules
+  (replay buffer, λ-returns); any run beyond the vertical-slice/3-seed scope (≥5-seed sweep,
+  Arms B–D, ablation 3); acting on a tripped spike kill criterion; creating issues/milestones.
 
 **Pre-approved (do autonomously, within stated scope):**
-- **Dependencies:** adding `@tensorflow/tfjs-node` and/or `@tensorflow/tfjs`, **pinned to 4.22.0** (the last stable release per ADR-0002 §1 — not a `4.23.0-rc.*` pre-release), for the Arm-A milestone backend. Land this in its **own** PR/commit touching only `package.json` + lockfile (plus a trivial smoke import that loads the module and runs one op, to surface any Apple-Silicon native-build failure early) — do not bundle it into a larger scaffold PR. **Any other new dependency still needs its own approval.**
+
+- **Dependencies:** `@tensorflow/tfjs-node` and/or `@tensorflow/tfjs`, **pinned exactly to
+  4.22.0** (per ADR-0002; the tfjs-node pin already landed 2026-07-15) — lockfile maintenance at
+  that same pin only. **Any other new dependency still needs its own approval.**
 
 **Never:**
-- Force-push; delete or rewrite existing artifacts, reports, or notes written by others; edit `loop/GOAL.md`; work on more than one increment per run; exceed one PR per run.
+
+- Force-push; delete or rewrite existing artifacts, reports, or notes written by others; edit
+  `loop/GOAL.md`; work on more than one increment per run; exceed one PR per run; spend increments
+  on Apple Silicon / darwin install issues (deprioritized per the PR #19 review — the human drives
+  any local darwin path out-of-band, see ADR-0002 decision 6).
 
 ## Stand-up report (every run, no exceptions)
 
@@ -64,7 +106,7 @@ Write `reports/standup/YYYY-MM-DD.md` (today's date) and include it in the PR:
 - <proposed next increment>
 
 ## Manifest
-- level: <L1 | L2-Arm-A> | increment: <#> | files touched: <n> | papers added: <n>
+- level: <L1 | L2-P2-slice> | increment: <#> | files touched: <n> | runs: <none | manifest path(s)>
 ```
 
 A run that produces no PR + report is a failed run. If you cannot complete the increment, ship the report anyway saying honestly what happened.
