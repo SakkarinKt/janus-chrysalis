@@ -83,17 +83,26 @@ export class RSSMCell {
     return output[0];
   }
 
-  /** Prior p(z_t | h_t) — no observation, used for imagination rollouts. */
-  prior(deterministic: tf.Tensor2D): LatentDistribution {
+  /**
+   * Prior p(z_t | h_t) — no observation, used for imagination rollouts.
+   * `fixedHard`, when given, is used in place of a freshly-drawn sample (see
+   * `sampleStraightThrough`) — needed by the end-to-end gradient-check test,
+   * since a fresh `tf.multinomial` draw on every forward call isn't a
+   * function of the weights being perturbed, which breaks finite-differencing.
+   */
+  prior(deterministic: tf.Tensor2D, fixedHard?: tf.Tensor3D): LatentDistribution {
     const logits = this.reshapeLogits(this.priorDense.apply(deterministic) as tf.Tensor2D);
-    return sampleStraightThrough(logits);
+    return sampleStraightThrough(logits, fixedHard);
   }
 
-  /** Posterior q(z_t | h_t, o_t) — conditions on a real observation, used for training. */
-  posterior(deterministic: tf.Tensor2D, observation: tf.Tensor2D): LatentDistribution {
+  /**
+   * Posterior q(z_t | h_t, o_t) — conditions on a real observation, used for
+   * training. `fixedHard`: see `prior()`.
+   */
+  posterior(deterministic: tf.Tensor2D, observation: tf.Tensor2D, fixedHard?: tf.Tensor3D): LatentDistribution {
     const input = tf.concat([deterministic, observation], 1);
     const logits = this.reshapeLogits(this.posteriorDense.apply(input) as tf.Tensor2D);
-    return sampleStraightThrough(logits);
+    return sampleStraightThrough(logits, fixedHard);
   }
 
   private reshapeLogits(flat: tf.Tensor2D): tf.Tensor3D {
@@ -170,10 +179,14 @@ export function sampleHard(logits: tf.Tensor3D): tf.Tensor3D {
   return tf.oneHot(indices, classes).toFloat().reshape([batch, categoricals, classes]) as tf.Tensor3D;
 }
 
-/** Samples a categorical latent from `logits` via the straight-through estimator. */
-export function sampleStraightThrough(logits: tf.Tensor3D): LatentDistribution {
+/**
+ * Samples a categorical latent from `logits` via the straight-through
+ * estimator. `fixedHard`, when given, replaces the internal `sampleHard`
+ * draw — see `RSSMCell.prior()`'s doc comment for why.
+ */
+export function sampleStraightThrough(logits: tf.Tensor3D, fixedHard?: tf.Tensor3D): LatentDistribution {
   const probs = tf.softmax(logits, -1) as tf.Tensor3D;
-  const hard = sampleHard(logits);
+  const hard = fixedHard ?? sampleHard(logits);
   const sample = straightThroughEstimator(logits, hard) as tf.Tensor3D;
   return { probs, sample: sample.reshape([logits.shape[0], -1]) as tf.Tensor2D };
 }

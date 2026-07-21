@@ -227,6 +227,140 @@ test("straightThroughEstimator: gradient is independent of which hard sample was
   assert.deepEqual(gradHard0, gradHard1);
 });
 
+/**
+ * A fixed one-hot per [batch, categorical] slot (always class 0) — a valid
+ * "hard" sample for straightThroughEstimator regardless of the actual
+ * logits, per the "gradient is independent of which hard sample was fixed"
+ * test above. Used to make a multi-step forward pass deterministic across
+ * the repeated calls a finite-difference check requires.
+ */
+function fixedHard(batch: number, categoricals: number, classes: number): tf.Tensor3D {
+  return tf
+    .oneHot(tf.fill([batch * categoricals], 0, "int32"), classes)
+    .toFloat()
+    .reshape([batch, categoricals, classes]) as tf.Tensor3D;
+}
+
+/**
+ * Runs `forward()` once to force lazy layer building, then diffs tf's global
+ * variable registry to find exactly the tf.Variables the layers created —
+ * passed explicitly to `tf.variableGrads` below as `varList`, since every
+ * earlier test in this file that constructs an `RSSMCell` leaves its own
+ * variables registered globally for the rest of the process (tfjs never
+ * garbage-collects them), and letting `variableGrads` default to "all
+ * trainable variables" pulls all of those unrelated ones in too — which
+ * throws inside tfjs's own gradient bookkeeping (confirmed by running it).
+ */
+function ownedVariablesAfter(forward: () => tf.Scalar): tf.Variable[] {
+  const before = new Set(Object.keys(tf.engine().registeredVariables));
+  forward();
+  const names = Object.keys(tf.engine().registeredVariables).filter((name) => !before.has(name));
+  return names.map((name) => tf.engine().registeredVariables[name]);
+}
+
+/** Finite-difference-checks `grad` against `variable`'s first few components. */
+function checkFiniteDifference(variable: tf.Variable, grad: tf.Tensor, forward: () => tf.Scalar): void {
+  const original = Array.from(variable.dataSync());
+  const analytic = Array.from(grad.dataSync());
+  const epsilon = 1e-4;
+  const numChecked = Math.min(3, original.length);
+
+  for (let i = 0; i < numChecked; i++) {
+    const plus = original.slice();
+    plus[i] += epsilon;
+    variable.assign(tf.tensor(plus, variable.shape));
+    const lossPlus = forward().arraySync() as number;
+
+    const minus = original.slice();
+    minus[i] -= epsilon;
+    variable.assign(tf.tensor(minus, variable.shape));
+    const lossMinus = forward().arraySync() as number;
+
+    variable.assign(tf.tensor(original, variable.shape));
+    const numeric = (lossPlus - lossMinus) / (2 * epsilon);
+    assert.ok(
+      Math.abs(numeric - analytic[i]) < 5e-3,
+      `${variable.name}[${i}]: finite-difference gradient ${numeric} vs analytic gradient ${analytic[i]}`,
+    );
+  }
+}
+
+test(
+  "RSSMCell: single training step (GRU step + prior head) gradient matches finite differences " +
+    "on every weight tf.variableGrads finds (week-3 stack-validation spike, extending the standalone STE check)",
+  () => {
+    const config = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
+    const rssm = new RSSMCell(config);
+    const priorHard = fixedHard(1, config.latentCategoricals, config.latentClasses);
+    const stochasticSize = config.latentCategoricals * config.latentClasses;
+    const lossWeights = tf.tensor2d([Array.from({ length: stochasticSize }, (_, i) => 0.1 * (i + 1) - 0.3)]);
+
+    // Loss is built from `probs` (plain softmax), not `sample` (the STE
+    // output): `sample`'s forward value is the fixed hard tensor, piecewise-
+    // constant in the weights and therefore identically finite-difference-
+    // zero regardless of correctness — exactly the trap the standalone
+    // straightThroughEstimator tests above document and route around. The
+    // STE's own gradient correctness is already covered by those tests; this
+    // one's new ground is the GRU step + dense head it's now chained behind.
+    function forward(): tf.Scalar {
+      const state = rssm.initialState(1);
+      const deterministic = rssm.step(state, [Action.Up]);
+      const { probs } = rssm.prior(deterministic, priorHard);
+      const flatProbs = probs.reshape([1, stochasticSize]) as tf.Tensor2D;
+      return tf.sum(tf.mul(flatProbs, lossWeights)) as tf.Scalar;
+    }
+
+    const ownedVariables = ownedVariablesAfter(forward);
+    assert.ok(ownedVariables.length > 0, "expected the forward pass to have built at least one trainable variable");
+
+    const { grads } = tf.variableGrads(forward, ownedVariables);
+    for (const variable of ownedVariables) {
+      checkFiniteDifference(variable, grads[variable.name], forward);
+    }
+  },
+);
+
+test(
+  "RSSMCell: chaining step()+prior() across >=2 timesteps and differentiating through the chain " +
+    "crashes tf.variableGrads — a tfjs-layers RNN bug (tensorflow/tfjs#1529, #3550), not a bug in this " +
+    "repo's code; documents the week-3 stack-validation spike's hard-kill-criterion trip (ADR-0002 decision 5)",
+  () => {
+    // Root-caused by direct experiment (see the 2026-07-21 stand-up and
+    // notes/adr-0002-js-ml-stack.md): whenever a `tf.layers.rnn`-wrapped
+    // cell's own hidden output feeds back into the *feature* input (not
+    // just `initialState`) of its own next `apply()` call within one
+    // differentiation trace, tfjs-layers' RNN backward pass throws this
+    // exact error. `RSSMCell.step()`'s recurrent input is
+    // `[onehot(action), z_{t-1}]`, where `z_{t-1}` comes from `prior()`/
+    // `posterior()` applied to the *previous* step's hidden state — i.e.
+    // every real multi-step rollout hits this by construction, not just an
+    // unlucky test shape. tensorflow/tfjs#1529 (opened 2019, tfjs 1.0.1) and
+    // #3550 (tfjs 2.0.0) report the same error for single-timestep RNN
+    // training generally; still reproduces on this repo's pinned 4.22.0.
+    const config = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
+    const rssm = new RSSMCell(config);
+    const priorHard = fixedHard(1, config.latentCategoricals, config.latentClasses);
+
+    function forward(): tf.Scalar {
+      let state = rssm.initialState(1);
+      for (const action of [Action.Up, Action.Right] as Action[]) {
+        const deterministic = rssm.step(state, [action]);
+        const { sample } = rssm.prior(deterministic, priorHard);
+        state = { deterministic, stochastic: sample };
+      }
+      return tf.sum(state.deterministic) as tf.Scalar;
+    }
+
+    const ownedVariables = ownedVariablesAfter(forward);
+    assert.throws(
+      () => tf.variableGrads(forward, ownedVariables),
+      /Argument tensors passed to stack must be a `Tensor\[\]` or `TensorLike\[\]`/,
+      "expected the known tfjs-layers RNN bug to still reproduce — if this now passes, the kill criterion " +
+        "may have cleared upstream; see the Decisions-needed item this test's stand-up report raised",
+    );
+  },
+);
+
 test("sampleHard: exactly one 1 per [batch, categorical] row, rest 0", () => {
   const logits = tf.tensor3d([
     [

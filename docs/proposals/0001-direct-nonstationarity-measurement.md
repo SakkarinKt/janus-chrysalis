@@ -244,3 +244,15 @@ project after a 2021-era release and never restored) — see `notes/adr-0002-js-
 2026-07-19 entries for the full evidence. Doesn't change this sandbox's progress, but narrows the
 Apple Silicon path to two options needing a human decision — see the 2026-07-19 stand-up's
 "Decisions needed."
+
+**2026-07-21 update**: week-3 stack-validation spike (`loop/GOAL.md` priority 2, ADR-0002 decision
+5). Extended the RSSM gradient-check to a full training step; found that differentiating
+`RSSMCell.step()` chained with `.prior()` across ≥2 timesteps crashes `tf.variableGrads` — a
+long-standing upstream tfjs-layers bug (`tensorflow/tfjs#1529`, `#3550`), not fixable from this
+proposal's side, and one that affects exactly the recurrence this proposal's Arm-A world model
+needs (see `notes/adr-0002-js-ml-stack.md` §8 for the full root-cause). Steps/sec at Arm-A dims
+(h=256, z=32, batch 16) is otherwise healthy — ≈372/s forward rollout, ≈101/s single-step gradient
+— so the ≤200K-steps/arm/seed budget is fine on raw throughput; the open question is whether
+multi-step BPTT training can happen on this stack at all. Raised as a "Decisions needed" item in
+the 2026-07-21 stand-up rather than resolved here, per `loop/GOAL.md`'s hard-kill-criterion
+handling (no unilateral custom-autograd fallback).

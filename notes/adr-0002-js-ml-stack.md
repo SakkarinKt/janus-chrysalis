@@ -286,3 +286,57 @@ naive check *is* identically zero, so the reason for the indirection is pinned d
 just asserted in a comment. `notes/rssm-vs-ssm-implementation-robustness.md` §5's gradient-check
 recommendation is satisfied by this test, but its "needs only `tf.stopGradient`" framing (§4 of that
 note) inherits the same correction.
+
+## 8. Week-3 stack-validation spike (2026-07-21): multi-step BPTT crashes, likely the ADR-0002 decision-5 hard kill criterion tripping
+
+**[high, self_checked, execution-confirmed]** Extending the standalone `straightThroughEstimator`
+gradient-check (§7's 2026-07-20 entry) to a full training-step — `RSSMCell.step()` chained with
+`.prior()` across **two or more** timesteps, differentiated via `tf.variableGrads` — throws
+`Argument tensors passed to stack must be a Tensor[] or TensorLike[]` from inside `tfjs-layers`'
+own RNN backward-pass code, not this repo's. A **single** timestep (`step()` + `.prior()` once, no
+chaining) differentiates correctly and passes its finite-difference check
+(`test/model/rssm.test.ts`); the crash appears exactly at ≥2 chained steps.
+
+**Root-caused, not just observed**: built minimal repros (outside this repo's code, plain
+`tf.layers.gruCell` + `tf.layers.rnn`) to isolate the trigger. A *control* case — the same RNN
+layer instance called twice in one differentiation trace, with the second call's hidden-state
+input linked to the first only via `initialState` — differentiates fine. A *treatment* case —
+identical setup, except the second call's **feature input** also derives from the first call's
+output (exactly `RSSMCell.step()`'s `[onehot(action), z_{t-1}]` pattern, since `z_{t-1}` comes from
+`.prior()` applied to the previous step's hidden state) — reproduces the crash. So this isn't an
+unlucky test shape: **any** real multi-step differentiable rollout through this cell hits it, by
+construction of what the RSSM recurrence needs to do.
+
+**[high, self_checked, primary-source]** This matches a long-standing, apparently still-open
+upstream tfjs-layers bug, not something new to this pin: `tensorflow/tfjs#1529` (opened 2019,
+tfjs 1.0.1 — training an LSTM on a **single-timestep** sequence throws this exact error; a
+maintainer-assigned issue with a reported workaround of using ≥2 timesteps *per `.apply()` call*)
+and `tensorflow/tfjs#3550` (tfjs 2.0.0, same error, `model.fit()` on an LSTM stack). Fetched both
+issues directly (not just search snippets, per this note's own primary-source standard).
+Confirmed via direct execution that the identical error string still reproduces on this project's
+pinned `4.22.0`, seven years after #1529 was filed — this is not a "will presumably get fixed
+soon" situation.
+
+**Why the known workaround (≥2 timesteps per `.apply()` call) doesn't directly apply here**: that
+workaround presumes the whole sequence is knowable *before* calling the RNN layer once. RSSM's
+recurrence isn't: `z_{t-1}` (the input needed for step `t`) is itself computed *from* step `t-1`'s
+hidden state via the prior/posterior dense head, so the sequence can't be assembled up front and
+handed to a single multi-timestep `.apply()` call the way an ordinary externally-driven RNN can.
+
+**Read against ADR-0002 decision 5**: "if end-to-end gradient correctness (vs. finite differences)
+... fails on this stack ... tripping it is a human decision point ... not a unilateral loop pivot."
+This run's finding is exactly that failure — end-to-end (multi-step) gradient correctness doesn't
+just have precision issues, it crashes outright. Per `loop/GOAL.md`'s explicit instruction for this
+case, no custom-autograd fallback was attempted here; this is raised as a "Decisions needed" item
+in the 2026-07-21 stand-up instead. `test/model/rssm.test.ts` now has a test that pins the crash
+down (`assert.throws`, not `assert.ok`) so a future tfjs upgrade or workaround silently "fixing" it
+is caught, not missed.
+
+**Steps/sec** (the spike's other half, `experiments/2026-07-21-week3-stack-spike/`): measured what
+*is* currently computable at Arm-A dims (h=256, z=32 as an 8×4 categorical split — that split isn't
+specified anywhere in the repo, picked as a plausible DreamerV3-style scale-down; flagged as an
+assumption), batch 16, tfjs-node CPU, 200 timed iterations after 20 warmup: **forward-only
+imagination rollout ≈372 steps/sec; a single differentiable training step (no BPTT) ≈101
+steps/sec.** Both are comfortably fast enough for proposal `0001`'s ≤200K-steps/arm/seed,
+overnight-CPU-run budget considered alone — but that budget assumed multi-step BPTT training would
+work at all, which this entry's finding puts in question independent of raw throughput.

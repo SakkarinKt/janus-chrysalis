@@ -1,0 +1,26 @@
+{
+  "date": "2026-07-21",
+  "purpose": "week-3 stack-validation spike: tfjs-node CPU steps/sec at Arm-A dims",
+  "backend": "tensorflow",
+  "config": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "batch": 16,
+  "warmupIters": 20,
+  "timedIters": 200,
+  "forwardRollout": {
+    "iters": 200,
+    "seconds": 0.537465186,
+    "stepsPerSec": 372.11712536856294
+  },
+  "singleStepGradient": {
+    "iters": 200,
+    "seconds": 1.974311498,
+    "stepsPerSec": 101.30113723320878
+  },
+  "notMeasured": {
+    "multiStepGradient": "blocked — chaining step()+prior() across >=2 timesteps and differentiating crashes tf.variableGrads on this stack (see test/model/rssm.test.ts, notes/adr-0002-js-ml-stack.md 2026-07-21 entry)"
+  }
+}
