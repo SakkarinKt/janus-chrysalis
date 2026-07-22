@@ -322,21 +322,10 @@ test(
 
 test(
   "RSSMCell: chaining step()+prior() across >=2 timesteps and differentiating through the chain " +
-    "crashes tf.variableGrads — a tfjs-layers RNN bug (tensorflow/tfjs#1529, #3550), not a bug in this " +
-    "repo's code; documents the week-3 stack-validation spike's hard-kill-criterion trip (ADR-0002 decision 5)",
+    "matches finite differences — the week-3 spike's direct-cell-call fix (2026-07-22, processing " +
+    "PR #22's review) avoids the tfjs-layers RNN-wrapper bug documented below, so the kill criterion " +
+    "did not fire (supersedes notes/adr-0002-js-ml-stack.md §8's 'likely tripped' read; see §9)",
   () => {
-    // Root-caused by direct experiment (see the 2026-07-21 stand-up and
-    // notes/adr-0002-js-ml-stack.md): whenever a `tf.layers.rnn`-wrapped
-    // cell's own hidden output feeds back into the *feature* input (not
-    // just `initialState`) of its own next `apply()` call within one
-    // differentiation trace, tfjs-layers' RNN backward pass throws this
-    // exact error. `RSSMCell.step()`'s recurrent input is
-    // `[onehot(action), z_{t-1}]`, where `z_{t-1}` comes from `prior()`/
-    // `posterior()` applied to the *previous* step's hidden state — i.e.
-    // every real multi-step rollout hits this by construction, not just an
-    // unlucky test shape. tensorflow/tfjs#1529 (opened 2019, tfjs 1.0.1) and
-    // #3550 (tfjs 2.0.0) report the same error for single-timestep RNN
-    // training generally; still reproduces on this repo's pinned 4.22.0.
     const config = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
     const rssm = new RSSMCell(config);
     const priorHard = fixedHard(1, config.latentCategoricals, config.latentClasses);
@@ -352,11 +341,69 @@ test(
     }
 
     const ownedVariables = ownedVariablesAfter(forward);
+    const { grads } = tf.variableGrads(forward, ownedVariables);
+
+    // Check only the GRU cell's own weights (kernel/recurrent_kernel/bias):
+    // with `priorHard` fixed, `prior()`'s `sample` forward value is the same
+    // constant regardless of `priorDense`'s weights (the STE finite-diff trap
+    // the "single training step" test above documents), so `priorDense`'s
+    // kernel/bias have a genuinely-zero finite-difference gradient here even
+    // though the analytic STE gradient routes a nonzero value back through
+    // them — not a bug, just not checkable by this construction.
+    const cellVariables = new Set(
+      (rssm as unknown as { cell: { trainableWeights: Array<{ val: tf.Variable }> } }).cell.trainableWeights.map(
+        (w) => w.val,
+      ),
+    );
+    const checkedVariables = ownedVariables.filter((v) => cellVariables.has(v));
+    assert.equal(checkedVariables.length, 3, "expected exactly the GRU cell's kernel/recurrent_kernel/bias");
+    for (const variable of checkedVariables) {
+      checkFiniteDifference(variable, grads[variable.name], forward);
+    }
+  },
+);
+
+test(
+  "regression pin: tf.layers.rnn (the wrapper RSSMCell.step() no longer uses) still crashes " +
+    "tf.variableGrads when chained across >=2 timesteps — tensorflow/tfjs#1529, #3550, reproduced " +
+    "directly against raw tf.layers primitives so this stays caught if any future code reaches for " +
+    "the wrapper again, independent of RSSMCell's own implementation",
+  () => {
+    // Root-caused by direct experiment (see the 2026-07-21/07-22 stand-ups and
+    // notes/adr-0002-js-ml-stack.md §8-9): whenever a `tf.layers.rnn`-wrapped
+    // cell's own hidden output feeds back into the *feature* input (not just
+    // `initialState`) of its own next `apply()` call within one
+    // differentiation trace, tfjs-layers' RNN backward pass throws this exact
+    // error — traced to `rnn()`'s internal `tfc.unstack`/`tfc.stack`
+    // bookkeeping, which runs on every call regardless of sequence length.
+    // tensorflow/tfjs#1529 (opened 2019, tfjs 1.0.1) and #3550 (tfjs 2.0.0)
+    // report the same error for single-timestep RNN training generally;
+    // still reproduces on this repo's pinned 4.22.0. Uses raw
+    // `tf.layers.gruCell`/`tf.layers.rnn` rather than `RSSMCell`, since
+    // `RSSMCell.step()` (2026-07-22) no longer goes through the wrapper.
+    const units = 3;
+    const cell = tf.layers.gruCell({ units });
+    const rnn = tf.layers.rnn({ cell, returnState: true, returnSequences: false });
+
+    function forward(): tf.Scalar {
+      let h = tf.zeros([1, units]) as tf.Tensor2D;
+      let feature = tf.zeros([1, units]) as tf.Tensor2D;
+      for (let i = 0; i < 2; i++) {
+        const input = feature.reshape([1, 1, units]);
+        const output = rnn.apply(input, { initialState: [h] }) as tf.Tensor2D[];
+        h = output[0];
+        feature = h; // next feature depends on the previous hidden output, like RSSMCell's z_{t-1} via prior(h)
+      }
+      return tf.sum(h) as tf.Scalar;
+    }
+
+    const ownedVariables = ownedVariablesAfter(forward);
     assert.throws(
       () => tf.variableGrads(forward, ownedVariables),
       /Argument tensors passed to stack must be a `Tensor\[\]` or `TensorLike\[\]`/,
-      "expected the known tfjs-layers RNN bug to still reproduce — if this now passes, the kill criterion " +
-        "may have cleared upstream; see the Decisions-needed item this test's stand-up report raised",
+      "expected the known tfjs-layers RNN bug to still reproduce — if this now passes, tfjs-layers may " +
+        "have fixed tensorflow/tfjs#1529/#3550 upstream, which is worth its own note but doesn't change " +
+        "RSSMCell (it no longer depends on this wrapper either way)",
     );
   },
 );

@@ -256,3 +256,12 @@ needs (see `notes/adr-0002-js-ml-stack.md` §8 for the full root-cause). Steps/s
 multi-step BPTT training can happen on this stack at all. Raised as a "Decisions needed" item in
 the 2026-07-21 stand-up rather than resolved here, per `loop/GOAL.md`'s hard-kill-criterion
 handling (no unilateral custom-autograd fallback).
+
+**2026-07-22 update**: resolved, favorably. Processing the reviewer's reply on that "Decisions
+needed" item — try calling the GRU cell's step function directly, bypassing the `tf.layers.rnn`
+wrapper, before considering the custom-autograd fallback — the bypass works cleanly: no crash,
+finite-difference gradients match across every chain length tried (2-4 steps). `RSSMCell.step()`
+now uses this approach in production. The week-3 kill criterion did not fire; multi-step BPTT
+training is unblocked on this stack with no new gradient math. Full root-cause and fix details in
+`notes/adr-0002-js-ml-stack.md` §9. Multi-step BPTT steps/sec (as opposed to the single-step number
+above) is still unmeasured — a natural next increment now that it's actually computable.

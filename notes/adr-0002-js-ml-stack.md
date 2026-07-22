@@ -340,3 +340,58 @@ imagination rollout ≈372 steps/sec; a single differentiable training step (no 
 steps/sec.** Both are comfortably fast enough for proposal `0001`'s ≤200K-steps/arm/seed,
 overnight-CPU-run budget considered alone — but that budget assumed multi-step BPTT training would
 work at all, which this entry's finding puts in question independent of raw throughput.
+
+## 9. Week-3 spike, continued (2026-07-22): the kill criterion did not fire — `cell.call()` bypass fixes multi-step BPTT
+
+**[high, self_checked, execution-confirmed]** Processing PR #22's review ("take option (b) first —
+spike calling the GRU cell's step fn directly, bypassing the `tf.layers.rnn` wrapper... Timebox
+it"): **it works.** `RSSMCell.step()` now calls `this.cell.call([recurrentInput, prevDeterministic],
+{training: false})` directly — the same primitive `RNN.call()`'s own `step` closure calls internally
+(`tfjs-layers/dist/layers/recurrent.js`, `RNN.call()`) — instead of wrapping the cell in
+`tf.layers.rnn` and calling `.apply()` on a length-1 sequence. Chained across 2, 3, and 4 timesteps
+in an ad-hoc spike script, then committed as a real test
+(`test/model/rssm.test.ts`'s "chaining step()+prior()... matches finite differences"): no crash, and
+the GRU cell's own `kernel`/`recurrent_kernel`/`bias` gradients match finite differences at every
+step count tried.
+
+**Root cause, precisely**: read `tfjs-layers/dist/layers/recurrent.js`'s `rnn()` helper (the function
+`RNN.call()` delegates to) directly. It calls `tfc.unstack(inputs)` on the time axis
+**unconditionally** — even for a length-1 sequence — and, when `needPerStepOutputs` is true (i.e.
+`returnSequences: true`; not our case, but the same function), `tfc.stack()`s the per-step outputs
+back together. §8's minimal repros already showed the crash needs a hidden-output-into-next-feature-
+input dependency across `.apply()` calls; this session's reading of the actual source narrows it
+further — the unstack/stack bookkeeping inside `rnn()` is the only plausible place a
+`tf.stack`-shaped error could originate from tfjs-layers' own backward pass, and it runs on every
+`RNN.call()`, sequence length notwithstanding. `GRUCell.call()` itself (`tfjs-layers/dist/layers/
+recurrent.js`, class `GRUCell`) is `tf.split`/`K.dot`/activation calls only — no stack/unstack
+anywhere — which is exactly why calling it directly sidesteps the bug rather than working around it.
+
+**This supersedes §8's "likely tripped" read of ADR-0002 decision 5.** The kill criterion is: "if
+end-to-end gradient correctness ... fails on this stack ... fall back to a small custom autograd."
+It didn't fail — a stack-primitive-level bypass fixes it cleanly, with no new gradient math, per the
+reviewer's own instruction to try this before considering the custom-autograd fallback (a). Per
+PR #22's review, (a) stays not-invoked.
+
+**One implementation wrinkle**: `GRUCell.build(inputShape)` needs the input shape as a single
+`Shape` (`getExactlyOneShape` inside `GRUCell.build()`), not the `[featureShape, stateShape]` pair
+`Layer.apply()` would infer if `cell.apply([input, h])` were called directly instead of
+`cell.call()` — confirmed by hitting `ValueError: Expected exactly 1 Shape; got 2` in the spike
+script before switching to explicitly calling `cell.build([null, recurrentInputWidth])` once
+(lazily, on `step()`'s first call, mirroring how `RNN.build()` itself builds the cell before ever
+calling `.call()`) and then using `cell.call()` — never `cell.apply()` — for every subsequent step.
+
+**Caveat, not yet resolved**: `test/model/rssm.test.ts`'s multi-step finite-difference check only
+validates the GRU cell's own weights (`kernel`/`recurrent_kernel`/`bias`), not `priorDense`'s —
+when `prior()` is called with a `fixedHard` override (needed to make a multi-step forward pass
+deterministic across the repeated calls finite-differencing requires), the sampled `z_t`'s forward
+value is that fixed constant regardless of `priorDense`'s weights, so `priorDense`'s finite-
+difference gradient is genuinely zero here — the same STE trap §7's 2026-07-20 entry documents,
+now surfacing at the RSSMCell level instead of the standalone estimator level. Not a defect in
+today's fix; just a gap in what this particular test construction can validate. `priorDense`'s own
+gradient correctness is separately covered by the single-step test (which reads out `probs` instead
+of chaining through `sample`).
+
+The `tf.layers.rnn`-wrapper bug itself is still real and still upstream (tfjs-layers hasn't shipped
+a fix for `tensorflow/tfjs#1529`/`#3550`) — `test/model/rssm.test.ts` keeps a standalone regression
+test pinning it directly against raw `tf.layers.gruCell`/`tf.layers.rnn`, independent of `RSSMCell`,
+so it stays caught if any future code in this repo reaches for the wrapper again.
