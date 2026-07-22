@@ -37,22 +37,33 @@ export interface LatentDistribution {
  * stochastic latent with prior/posterior heads (DreamerV3-style), per PR #14's
  * review ("split the cell as you proposed — struct/forward-pass, then STE +
  * gradient-check") and PR #19's reply resuming this deferred sub-increment.
- * The deterministic path composes `tf.layers.gruCell` via `tf.layers.rnn`
- * rather than hand-rolling GRU gate math, per
- * notes/rssm-vs-ssm-implementation-robustness.md §3's finding that TF.js's
- * own GRU layer is the mature, tested primitive to lean on.
+ * The deterministic path calls `tf.layers.gruCell.call()` directly, one
+ * timestep at a time — **not** through a `tf.layers.rnn` wrapper — per the
+ * week-3 stack-validation spike (2026-07-22, processing PR #22's review):
+ * chaining `tf.layers.rnn.apply()` calls across >=2 timesteps and
+ * differentiating through the chain crashes `tf.variableGrads` inside
+ * tfjs-layers' own RNN backward pass (`tensorflow/tfjs#1529`, `#3550`) —
+ * root-caused to `rnn()`'s internal `tfc.unstack`/`tfc.stack` bookkeeping,
+ * which runs even for a length-1 sequence. `GRUCell.call()` itself is plain
+ * matmul/split/activation ops with no stack/unstack anywhere, so calling it
+ * directly (bypassing the wrapper's sequence machinery) avoids the bug
+ * entirely, confirmed by a from-scratch gradient-check across up to 4
+ * chained steps (`test/model/rssm.test.ts`). `notes/adr-0002-js-ml-stack.md`
+ * §9 has the full investigation; this supersedes §8's "likely tripped" kill-
+ * criterion read — the criterion did not fire, no custom autograd needed.
+ * `GRUCell` is still the mature, tested primitive per
+ * notes/rssm-vs-ssm-implementation-robustness.md §3 — only the wrapper
+ * around it changed.
  */
 export class RSSMCell {
   readonly config: RSSMConfig;
   private readonly cell: ReturnType<typeof tf.layers.gruCell>;
-  private readonly rnn: ReturnType<typeof tf.layers.rnn>;
   private readonly priorDense: ReturnType<typeof tf.layers.dense>;
   private readonly posteriorDense: ReturnType<typeof tf.layers.dense>;
 
   constructor(config: RSSMConfig) {
     this.config = config;
     this.cell = tf.layers.gruCell({ units: config.deterministicSize });
-    this.rnn = tf.layers.rnn({ cell: this.cell, returnState: true, returnSequences: false });
     const stochasticSize = config.latentCategoricals * config.latentClasses;
     this.priorDense = tf.layers.dense({ units: stochasticSize });
     this.posteriorDense = tf.layers.dense({ units: stochasticSize });
@@ -75,12 +86,22 @@ export class RSSMCell {
    * first step). Returns `h_t` only — callers combine it with `prior()` or
    * `posterior()` to get the full next `RSSMState`, since which one supplies
    * `z_t` depends on whether an observation is available.
+   *
+   * Calls `this.cell.call()` directly rather than going through a
+   * `tf.layers.rnn`-wrapped `.apply()` — see the class doc comment for why:
+   * chaining the wrapper across timesteps within one differentiation trace
+   * crashes `tf.variableGrads`, but the cell's own `call()` is plain
+   * differentiable tensor ops with no such wrapper machinery in the way.
+   * Builds the cell's weights lazily on the first call (mirroring
+   * `tf.layers.rnn`'s own build-on-first-`apply()` behavior, and every other
+   * layer in this class), against the actual recurrent-input width rather
+   * than one computed ahead of time from config.
    */
   step(prevState: RSSMState, actions: Action[]): tf.Tensor2D {
     const recurrentInput = tf.concat([oneHotActions(actions), prevState.stochastic], 1);
-    const inputSeq = recurrentInput.reshape([actions.length, 1, recurrentInput.shape[1]]);
-    const output = this.rnn.apply(inputSeq, { initialState: [prevState.deterministic] }) as tf.Tensor2D[];
-    return output[0];
+    if (!this.cell.built) this.cell.build([null, recurrentInput.shape[1]]);
+    const [output] = this.cell.call([recurrentInput, prevState.deterministic], { training: false }) as tf.Tensor2D[];
+    return output;
   }
 
   /**

@@ -94,6 +94,31 @@ same reasoning as the prior sub-increment: no training loop exists yet to make t
 a real cost, and premature disposal risks disposing a tensor a caller still needs. Worth revisiting
 once the cell is wired into an actual multi-episode rollout.
 
+## Update (2026-07-22): the deterministic path no longer goes through `tf.layers.rnn`
+
+**Processing PR #22's review** (the week-3 stack-validation spike's follow-up — see
+`notes/adr-0002-js-ml-stack.md` §9): "What it is" above, written 2026-07-20, described `step()` as
+wrapping `tf.layers.gruCell` inside a `tf.layers.rnn` layer. That wrapper turned out to crash
+`tf.variableGrads` whenever `step()`+`prior()`/`posterior()` is chained across ≥2 timesteps in one
+differentiation trace (`tensorflow/tfjs#1529`, `#3550` — a still-open tfjs-layers bug, not this
+repo's) — every real multi-step rollout, since `z_{t-1}` feeding `step()` comes from the *previous*
+step's hidden state by construction.
+
+`step()` now calls `this.cell.call([recurrentInput, prevDeterministic], {training: false})`
+directly — the same lower-level method `tf.layers.rnn`'s own `RNN.call()` calls internally, one
+timestep at a time — bypassing the wrapper's sequence-handling machinery (`tfc.unstack`/`tfc.stack`,
+which is where the bug traces to) entirely. `GRUCell.call()` is plain differentiable tensor ops
+(`tf.split`/matmul/activation), so nothing about the underlying GRU math changed — only which layer
+of tfjs-layers gets called. The cell's weights now build lazily on `step()`'s first call via an
+explicit `cell.build([null, recurrentInputWidth])`, since `GRUCell.build()` expects a single input
+`Shape`, not the `[input, state]` shape pair `Layer.apply()` would infer.
+
+Net effect: the week-3 spike's kill criterion (ADR-0002 decision 5) did not fire. No custom autograd
+was needed — `test/model/rssm.test.ts` now has a passing finite-difference check chaining `step()` +
+`prior()` across multiple timesteps, plus a standalone regression test pinning the underlying
+`tf.layers.rnn` bug directly (independent of `RSSMCell`, in case future code reaches for the wrapper
+again).
+
 ## Test coverage
 
 `test/model/rssm.test.ts`, 44/44 passing (`npm test`; 35 prior + 9 new): `initialState`'s zero-fill
