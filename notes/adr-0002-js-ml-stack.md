@@ -395,3 +395,51 @@ The `tf.layers.rnn`-wrapper bug itself is still real and still upstream (tfjs-la
 a fix for `tensorflow/tfjs#1529`/`#3550`) — `test/model/rssm.test.ts` keeps a standalone regression
 test pinning it directly against raw `tf.layers.gruCell`/`tf.layers.rnn`, independent of `RSSMCell`,
 so it stays caught if any future code in this repo reaches for the wrapper again.
+
+## 10. Week-3 spike, closed out (2026-07-23): multi-step BPTT steps/sec is measured, and it's usable
+
+**[medium, self_checked, execution-confirmed]** §9 fixed multi-step gradient *correctness*; the
+other half of ADR-0002 decision 5's kill criterion — "usable steps/sec" — was still an open number,
+since `experiments/2026-07-21-week3-stack-spike/benchmark.ts` could only measure forward-rollout and
+single-step gradient throughput while multi-step BPTT crashed. That benchmark now also sweeps
+truncated-BPTT chain lengths {2, 4, 8, 16, 32} (picked to span "shorter than a plausible training
+chunk" to "longer than one" — no chunk length is specified anywhere in the repo; same status as the
+file's pre-existing `BATCH = 16` assumption) at Arm-A dims (h=256, 8×4 categorical latent), batch 16,
+on this run's container (`tfjs-node` CPU backend).
+
+Confidence is `medium`, not `high`, for two reasons this note flags explicitly: (1) only 30 timed
+iterations per chain length (5 warmup) — an order-of-magnitude read, not a precision benchmark, given
+each iteration's cost scales with chain length; (2) the single-step figure moved from ~101 steps/sec
+(2026-07-21, a different container) to ~57 steps/sec measured in this same run — container-to-
+container CPU variance, not a regression in the code between those dates (nothing touching the
+forward/gradient path changed the arithmetic; §9's fix only changed *which* timesteps are
+differentiable, not the single-step path's op count). Treat the absolute numbers as this-container
+figures, not a portable hardware spec.
+
+Raw result (`experiments/2026-07-21-week3-stack-spike/summary.json`, this run):
+
+| chain length | gradient-steps/sec | env-steps/sec (chain length × gradient-steps/sec) |
+| --- | --- | --- |
+| 2 | 41.4 | 82.8 |
+| 4 | 17.7 | 70.8 |
+| 8 | 8.6 | 68.6 |
+| 16 | 4.6 | 73.1 |
+| 32 | 2.6 | 82.3 |
+
+Env-steps/sec (the unit proposal `0001`'s training budget is denominated in) stays roughly flat
+across chain lengths at ~70–83/sec — expected, since total compute is ~linear in chain length and
+wrapper/dispatch overhead is a small, roughly constant fraction of it. Against proposal `0001`'s
+"target ≤200K environment steps per arm per seed... small enough for a laptop-CPU overnight run"
+budget: 200,000 ÷ ~75/sec ≈ 2,700 s ≈ **45 minutes** for one arm/seed's worth of environment steps at
+any of the swept chain lengths — far inside an overnight budget, with roughly an order of magnitude
+of headroom before "overnight" would be in question. **Reading ADR-0002 decision 5's "usable
+steps/sec" kill criterion against this: it does not fire either** — ties off the week-3 spike's last
+open number alongside §9's gradient-correctness result. This is a note, not an ADR edit: still
+`self_checked`, awaiting the same human-signoff treatment §9's finding got via the PR #23 review
+before it's folded into the formal ADR-0002 text.
+
+Caveat: this is throughput on synthetic fixed actions/targets with no real environment stepping,
+data loading, replay-buffer sampling, or loss computation beyond the toy `probs`-weighted sum used
+here — it bounds the RSSM forward/backward cost specifically, not the full training loop's
+steps/sec once the replay buffer (human's G2 module) and the real losses (priority 3) are wired in.
+Revisit once those land.

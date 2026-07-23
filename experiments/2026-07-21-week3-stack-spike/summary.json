@@ -1,5 +1,5 @@
 {
-  "date": "2026-07-21",
+  "date": "2026-07-23",
   "purpose": "week-3 stack-validation spike: tfjs-node CPU steps/sec at Arm-A dims",
   "backend": "tensorflow",
   "config": {
@@ -12,15 +12,49 @@
   "timedIters": 200,
   "forwardRollout": {
     "iters": 200,
-    "seconds": 0.537465186,
-    "stepsPerSec": 372.11712536856294
+    "seconds": 0.749623799,
+    "stepsPerSec": 266.80049415026645
   },
   "singleStepGradient": {
     "iters": 200,
-    "seconds": 1.974311498,
-    "stepsPerSec": 101.30113723320878
+    "seconds": 3.533389943,
+    "stepsPerSec": 56.60286671620268
   },
-  "notMeasured": {
-    "multiStepGradient": "blocked — chaining step()+prior() across >=2 timesteps and differentiating crashes tf.variableGrads on this stack (see test/model/rssm.test.ts, notes/adr-0002-js-ml-stack.md 2026-07-21 entry)"
+  "multiStepGradient": {
+    "note": "2026-07-21 this was blocked (chaining step()+prior() across >=2 timesteps and differentiating crashed tf.variableGrads); unblocked by 2026-07-22's direct-cell-call fix (ADR-0002 decision 5 addendum) and measured here across a chain-length sweep (chunk length not specified anywhere in the repo, see this file's doc comment)",
+    "multiStepWarmupIters": 5,
+    "multiStepTimedIters": 30,
+    "byChainLength": [
+      {
+        "chainLength": 2,
+        "iters": 30,
+        "seconds": 0.7243067,
+        "stepsPerSec": 41.41891825658937
+      },
+      {
+        "chainLength": 4,
+        "iters": 30,
+        "seconds": 1.695525352,
+        "stepsPerSec": 17.693631041619483
+      },
+      {
+        "chainLength": 8,
+        "iters": 30,
+        "seconds": 3.497572492,
+        "stepsPerSec": 8.577377615079893
+      },
+      {
+        "chainLength": 16,
+        "iters": 30,
+        "seconds": 6.56605715,
+        "stepsPerSec": 4.568952007979401
+      },
+      {
+        "chainLength": 32,
+        "iters": 30,
+        "seconds": 11.666047104,
+        "stepsPerSec": 2.571565135350237
+      }
+    ]
   }
 }
