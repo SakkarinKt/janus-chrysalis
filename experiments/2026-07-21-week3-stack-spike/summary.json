@@ -1,5 +1,5 @@
 {
-  "date": "2026-07-21",
+  "date": "2026-07-23",
   "purpose": "week-3 stack-validation spike: tfjs-node CPU steps/sec at Arm-A dims",
   "backend": "tensorflow",
   "config": {
@@ -12,15 +12,54 @@
   "timedIters": 200,
   "forwardRollout": {
     "iters": 200,
-    "seconds": 0.537465186,
-    "stepsPerSec": 372.11712536856294
+    "seconds": 0.510313209,
+    "stepsPerSec": 391.91617319080603
   },
   "singleStepGradient": {
     "iters": 200,
-    "seconds": 1.974311498,
-    "stepsPerSec": 101.30113723320878
+    "seconds": 2.227566305,
+    "stepsPerSec": 89.78408389060276
   },
-  "notMeasured": {
-    "multiStepGradient": "blocked — chaining step()+prior() across >=2 timesteps and differentiating crashes tf.variableGrads on this stack (see test/model/rssm.test.ts, notes/adr-0002-js-ml-stack.md 2026-07-21 entry)"
+  "multiStepGradient": {
+    "note": "2026-07-21 this was blocked (chaining step()+prior() across >=2 timesteps and differentiating crashed tf.variableGrads); unblocked by 2026-07-22's direct-cell-call fix (ADR-0002 decision 5 addendum) and measured here across a chain-length sweep (chunk length not specified anywhere in the repo, see this file's doc comment). modelTimestepsPerSec = chainLength * BATCH * stepsPerSec is the (batch row, timestep) throughput the stack actually computes; converting to environment-steps/sec needs a replay ratio not yet fixed anywhere in this repo (2026-07-23 correction, see this file's doc comment and notes/adr-0002-js-ml-stack.md §10)",
+    "multiStepWarmupIters": 5,
+    "multiStepTimedIters": 30,
+    "byChainLength": [
+      {
+        "chainLength": 2,
+        "iters": 30,
+        "seconds": 0.515621882,
+        "stepsPerSec": 58.18217001116333,
+        "modelTimestepsPerSec": 1861.8294403572265
+      },
+      {
+        "chainLength": 4,
+        "iters": 30,
+        "seconds": 1.149484144,
+        "stepsPerSec": 26.09866361062219,
+        "modelTimestepsPerSec": 1670.3144710798201
+      },
+      {
+        "chainLength": 8,
+        "iters": 30,
+        "seconds": 2.146678002,
+        "stepsPerSec": 13.975081484996744,
+        "modelTimestepsPerSec": 1788.8104300795833
+      },
+      {
+        "chainLength": 16,
+        "iters": 30,
+        "seconds": 4.492682644,
+        "stepsPerSec": 6.677524850339729,
+        "modelTimestepsPerSec": 1709.4463616869707
+      },
+      {
+        "chainLength": 32,
+        "iters": 30,
+        "seconds": 8.08599982,
+        "stepsPerSec": 3.710116332898954,
+        "modelTimestepsPerSec": 1899.5795624442644
+      }
+    ]
   }
 }
