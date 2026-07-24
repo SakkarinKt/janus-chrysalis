@@ -24,15 +24,32 @@
  * `modelTimestepsPerSec` — chainLength * BATCH * gradient-steps/sec, i.e.
  * how many (batch row, timestep) pairs the stack actually differentiates
  * per second — not "environment-steps/sec". An earlier version of this
- * comment equated the two, silently assuming every batch row is a distinct,
- * never-replayed environment step (replay ratio 1). Converting to actual
- * environment-steps/sec needs a replay ratio (how many times each collected
- * transition is replayed through a gradient step, on average), which isn't
- * fixed anywhere in this repo yet — see notes/adr-0002-js-ml-stack.md §10
- * for the worked example of how much that choice moves the wall-clock
- * estimate against proposal 0001's budget.
+ * comment equated the two by computing chainLength * gradient-steps/sec,
+ * dropping the batch term entirely. Converting to actual environment-
+ * steps/sec needs a replay ratio (how many times each collected transition
+ * is replayed through a gradient step, on average), which isn't fixed
+ * anywhere in this repo yet — see notes/adr-0002-js-ml-stack.md §10 for the
+ * worked example of how much that choice moves the wall-clock estimate
+ * against proposal 0001's budget.
+ *
+ * Second correction (2026-07-24, PR #24 review, same-day comment): the
+ * paragraph above originally called the earlier bug "silently assuming
+ * replay ratio 1" — backwards. Dropping the batch term is arithmetically
+ * `modelTimestepsPerSec / BATCH`, which is what environment-steps/sec
+ * equals at replay ratio = BATCH (16), not ratio 1. So the pre-correction
+ * ~70-83 figure was a coincidentally-valid point on the replay-ratio curve
+ * at ratio 16 (see notes/adr-0002-js-ml-stack.md §10's bracket table) and a
+ * conservative (~16x-too-low) read of the stack's raw throughput — not an
+ * optimistic one assuming no replay at all.
+ *
+ * Also as of 2026-07-24: `tf.variableGrads`'s `grads` return value (one
+ * tensor per differentiated variable) was never disposed in the timed loop
+ * below — only `value` was. Fixed; each timed benchmark now also reports a
+ * `tensorLeakCheck` (tensor count immediately before vs. after the timed
+ * loop) so a future regression shows up in the numbers instead of silently
+ * growing memory.
  */
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import tf from "@tensorflow/tfjs-node";
 import { RSSMCell } from "../../src/model/rssm.ts";
@@ -118,12 +135,23 @@ function benchmarkSingleStepGradient() {
     .map((name) => tf.engine().registeredVariables[name]);
 
   const step = () => {
-    const { value } = tf.tidy(() => tf.variableGrads(forward, varList));
+    const { value, grads } = tf.tidy(() => tf.variableGrads(forward, varList));
     value.dispose();
+    Object.values(grads).forEach((g) => g.dispose());
   };
 
   for (let i = 0; i < WARMUP_ITERS; i++) step();
-  return timeIters(TIMED_ITERS, step);
+  const tensorsBeforeTimed = tf.memory().numTensors;
+  const timed = timeIters(TIMED_ITERS, step);
+  const tensorsAfterTimed = tf.memory().numTensors;
+  return {
+    ...timed,
+    tensorLeakCheck: {
+      before: tensorsBeforeTimed,
+      after: tensorsAfterTimed,
+      leaked: tensorsAfterTimed - tensorsBeforeTimed,
+    },
+  };
 }
 
 /**
@@ -158,25 +186,45 @@ function benchmarkMultiStepGradient(chainLength: number) {
     .map((name) => tf.engine().registeredVariables[name]);
 
   const step = () => {
-    const { value } = tf.tidy(() => tf.variableGrads(forward, varList));
+    const { value, grads } = tf.tidy(() => tf.variableGrads(forward, varList));
     value.dispose();
+    Object.values(grads).forEach((g) => g.dispose());
   };
 
   for (let i = 0; i < MULTI_STEP_WARMUP_ITERS; i++) step();
+  const tensorsBeforeTimed = tf.memory().numTensors;
   const timed = timeIters(MULTI_STEP_TIMED_ITERS, step);
+  const tensorsAfterTimed = tf.memory().numTensors;
   // Actual (batch row, timestep) pairs differentiated per second — see the
   // 2026-07-23 correction in this file's doc comment for why this isn't
   // labeled "environment-steps/sec".
   const modelTimestepsPerSec = timed.stepsPerSec * chainLength * BATCH;
-  return { chainLength, ...timed, modelTimestepsPerSec };
+  return {
+    chainLength,
+    ...timed,
+    modelTimestepsPerSec,
+    tensorLeakCheck: {
+      before: tensorsBeforeTimed,
+      after: tensorsAfterTimed,
+      leaked: tensorsAfterTimed - tensorsBeforeTimed,
+    },
+  };
 }
 
 const forwardRollout = benchmarkForwardRollout();
 const singleStepGradient = benchmarkSingleStepGradient();
 const multiStepGradient = CHAIN_LENGTHS.map(benchmarkMultiStepGradient);
 
-const summary = {
-  date: "2026-07-23",
+const run = {
+  // Filled in below once the existing history (if any) is loaded, so this
+  // run gets a unique id even if it's not the first one today.
+  runId: "",
+  date: "",
+  // Not knowable from inside the script — the commit this run ships in is
+  // created after the script runs. Fill in by hand once committed (see the
+  // 2026-07-21/2026-07-23 backfilled entries below for the pattern), or
+  // leave null.
+  commit: null,
   purpose: "week-3 stack-validation spike: tfjs-node CPU steps/sec at Arm-A dims",
   backend: tf.getBackend(),
   config: ARM_A_CONFIG,
@@ -200,7 +248,21 @@ const summary = {
   },
 };
 
-console.log(JSON.stringify(summary, null, 2));
+// summary.json is append-only as of 2026-07-24 (PR #24 review: overwriting
+// it twice on 2026-07-23 destroyed the evidence behind numbers already
+// cited in notes/adr-0002-js-ml-stack.md and docs/proposals/0001-*.md).
+// Each run gets a unique runId ("YYYY-MM-DD" plus a letter suffix if more
+// than one run happens the same day) instead of replacing the file.
 const outPath = fileURLToPath(new URL("summary.json", import.meta.url));
-writeFileSync(outPath, JSON.stringify(summary, null, 2) + "\n");
+const existing = existsSync(outPath) ? JSON.parse(readFileSync(outPath, "utf8")) : { runs: [] };
+const existingRuns = Array.isArray(existing.runs) ? existing.runs : [];
+
+const date = new Date().toISOString().slice(0, 10);
+const sameDayCount = existingRuns.filter((r) => r.date === date).length;
+run.runId = date + String.fromCharCode("a".charCodeAt(0) + sameDayCount);
+run.date = date;
+
+const runs = [...existingRuns, run];
+console.log(JSON.stringify(run, null, 2));
+writeFileSync(outPath, JSON.stringify({ runs }, null, 2) + "\n");
 

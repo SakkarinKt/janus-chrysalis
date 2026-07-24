@@ -3,7 +3,7 @@
 - **Status**: accepted (approved by @SakkarinKt via review + merge of the Gate-G1 PR, 2026-07-20 —
   consolidating the piecewise approvals from PR #7, 2026-07-08, and PR #19, 2026-07-19)
 - **Deciders**: @SakkarinKt (signoff), Claude (research + drafting)
-- **Evidence**: `notes/adr-0002-js-ml-stack.md` §1–§9 and
+- **Evidence**: `notes/adr-0002-js-ml-stack.md` §1–§10 and
   `notes/rssm-vs-ssm-implementation-robustness.md` (claims there are `self_checked`; the human
   review of this PR is the verifying review)
 
@@ -42,6 +42,16 @@
    gradient math. `RSSMCell.step()` uses this directly-called form now; decision 3's TF.js-primitives
    choice and decision 4's `tf.customGrad` mechanism are unaffected. Full root-cause in
    `notes/adr-0002-js-ml-stack.md` §9.
+
+   **Steps/sec evaluated 2026-07-23 — also did not fire (approved by @SakkarinKt, PR #24 review).**
+   Multi-step BPTT throughput, swept across truncated-BPTT chain lengths 2–32 at Arm-A dims, is
+   roughly flat at ~1,200–1,900 model-timesteps/sec regardless of chain length (container-dependent).
+   Converting to proposal `0001`'s ≤200K-env-steps-per-arm-per-seed budget requires a replay ratio,
+   not yet fixed anywhere: at 16 it's ≈30–45 min/arm/seed, at 512 it's ≈16–24h. The criterion does
+   not fire on raw throughput — the stack computes multi-step BPTT gradients at a usable rate — but
+   the overnight-run budget in proposal `0001` is contingent on the replay ratio chosen later, and
+   should be re-checked when it is. Full numbers in `notes/adr-0002-js-ml-stack.md` §10. Both halves
+   of decision 5's kill criterion are now evaluated; the week-3 spike is closed.
 6. **Canonical training environments: Linux x64 (loop sandbox + CI).** `tfjs-node` ships no darwin
    prebuilt addon at the napi-v8 tier for any version ever published (exhaustive GCS bucket probe,
    notes §3). Apple Silicon is deprioritized as a loop concern per the PR #19 review; any local
