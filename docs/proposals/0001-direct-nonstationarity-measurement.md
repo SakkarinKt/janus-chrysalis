@@ -269,19 +269,28 @@ above) is still unmeasured — a natural next increment now that it's actually c
 **2026-07-23 update**: measured, then corrected same day (PR #24 review). `benchmark.ts` now sweeps
 truncated-BPTT chain lengths {2, 4, 8, 16, 32} at Arm-A dims. The first version of this update
 converted the result straight to "environment-steps/sec" by multiplying chain length × gradient-
-steps/sec — wrong, since it silently assumed every batch row (`BATCH = 16`) is a distinct,
-never-replayed environment step. What's actually measured is `modelTimestepsPerSec` (chain length ×
-batch × gradient-steps/sec): ~1,700–1,900/sec this run, roughly flat across chain lengths as expected
-(compute is ~linear in chain length). **On raw stack throughput, the kill criterion's steps/sec half
-doesn't fire** — that's not a slow stack. But converting to this proposal's own
-≤200K-env-steps-per-arm-per-seed budget needs a **replay ratio**, not fixed anywhere yet: at replay
-ratio 16 it's ≈30 min/arm/seed (comfortably overnight); at replay ratio 512 it's ≈16 h (right at the
-edge of "overnight"). Both are plausible training configurations. So: stack throughput is usable:
-confirmed. Whether it clears *this proposal's* overnight-run budget specifically: contingent on a
-replay ratio this proposal doesn't fix yet — worth pinning down before the real Arm-A training runs,
-not before now. Full numbers, the correction, and caveats (container-to-container variance,
-synthetic-throughput-only scope — no real env stepping, replay sampling, or real losses yet) in
-`notes/adr-0002-js-ml-stack.md` §10. Medium confidence, not high: 30 timed iterations per chain
-length is an order-of-magnitude read, and the replay buffer (human's G2 module) and real losses
-(priority 3) aren't wired in yet, so this bounds RSSM forward/backward cost specifically, not the
-eventual full training loop's throughput.
+steps/sec — wrong, since it drops the batch dimension (`BATCH = 16`) entirely. What's actually
+measured is `modelTimestepsPerSec` (chain length × batch × gradient-steps/sec): ~1,700–1,900/sec
+this run, roughly flat across chain lengths as expected (compute is ~linear in chain length). **On
+raw stack throughput, the kill criterion's steps/sec half doesn't fire** — that's not a slow stack.
+But converting to this proposal's own ≤200K-env-steps-per-arm-per-seed budget needs a **replay
+ratio**, not fixed anywhere yet: at replay ratio 16 it's ≈30 min/arm/seed (comfortably overnight);
+at replay ratio 512 it's ≈16 h (right at the edge of "overnight"). Both are plausible training
+configurations. So: stack throughput is usable: confirmed. Whether it clears *this proposal's*
+overnight-run budget specifically: contingent on a replay ratio this proposal doesn't fix yet —
+worth pinning down before the real Arm-A training runs, not before now. Full numbers, the
+correction, and caveats (container-to-container variance, synthetic-throughput-only scope — no real
+env stepping, replay sampling, or real losses yet) in `notes/adr-0002-js-ml-stack.md` §10. Medium
+confidence, not high: 30 timed iterations per chain length is an order-of-magnitude read, and the
+replay buffer (human's G2 module) and real losses (priority 3) aren't wired in yet, so this bounds
+RSSM forward/backward cost specifically, not the eventual full training loop's throughput.
+
+**2026-07-24 correction (same PR, later same-day comment):** the paragraph above's "silently
+assumed every batch row is a distinct, never-replayed environment step" framing was itself backwards
+— dropping `BATCH` from the formula is arithmetically `modelTimestepsPerSec ÷ BATCH`, which is what
+environment-steps/sec equals at replay ratio = `BATCH` (16), not ratio 1. So the pre-correction
+figure was a conservative (~16×-too-low) read of raw stack throughput, coincidentally valid at
+replay ratio 16 specifically — not an optimistic ratio-1 assumption. The replay-ratio bracket table
+itself (≈30 min at ratio 16, ≈16 h at ratio 512) was independently verified against the raw data and
+stands unchanged; only the diagnosis of *why* the first version's formula was wrong needed fixing.
+Full correction in `notes/adr-0002-js-ml-stack.md` §10.

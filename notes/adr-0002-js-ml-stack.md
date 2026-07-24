@@ -410,21 +410,44 @@ on this run's container (`tfjs-node` CPU backend).
 **Correction (same day, caught in @SakkarinKt's PR #24 review):** the version of this entry first
 committed today reported "env-steps/sec = chain length × gradient-steps/sec" and checked that
 directly against proposal `0001`'s ≤200K-env-steps-per-arm-per-seed budget. That's wrong — it
-silently assumes every one of the 16 batch rows in a gradient step is a distinct, never-replayed
-environment step (replay ratio 1), which is neither stated nor a realistic training setup. The
-benchmark measures `modelTimestepsPerSec = chainLength × BATCH × gradient-steps/sec` — how many
-(batch row, timestep) pairs the stack actually differentiates per second — and that's a genuinely
-stack-throughput number, not an environment-throughput one. Converting it to environment-steps/sec
-requires a **replay ratio** (how many times each collected transition is replayed through a gradient
-step, on average), which isn't fixed anywhere in this repo yet.
+drops the batch dimension (`BATCH = 16`) from the computation entirely. The benchmark measures
+`modelTimestepsPerSec = chainLength × BATCH × gradient-steps/sec` — how many (batch row, timestep)
+pairs the stack actually differentiates per second — and that's a genuinely stack-throughput
+number, not an environment-throughput one. Converting it to environment-steps/sec requires a
+**replay ratio** (how many times each collected transition is replayed through a gradient step, on
+average), which isn't fixed anywhere in this repo yet.
+
+**Second correction (2026-07-24, same PR, later same-day comment):** the paragraph above, in its
+first form, described the dropped-batch bug as "silently assuming every batch row is a distinct,
+never-replayed environment step (replay ratio 1)." That diagnosis is backwards. Dropping `BATCH`
+is arithmetically `modelTimestepsPerSec ÷ BATCH`, which is exactly what environment-steps/sec
+equals at replay ratio = `BATCH` (16) — not ratio 1 (see the bracket table below: the ratio-16 row
+computes to ≈113 env-steps/sec, matching the pre-correction figure once container variance is
+accounted for). So the pre-correction ~70–83 figure was a coincidentally-valid point on the
+replay-ratio curve at ratio 16, and a conservative (~16×-too-low) read of the stack's raw
+throughput — not an optimistic one assuming no replay at all.
 
 Confidence is `medium`, not `high`, for reasons beyond the correction itself: (1) only 30 timed
 iterations per chain length (5 warmup) — an order-of-magnitude read, not a precision benchmark, given
 each iteration's cost scales with chain length; (2) the single-step figure has moved across every run
-of this script so far (~101/s on 2026-07-21, ~57/s and then ~90/s across two 2026-07-23 runs, all
-different containers) with no change to the forward/gradient arithmetic between those dates —
-container-to-container CPU variance, not a code regression. Treat every absolute number here as
-this-container-this-run, not a portable hardware spec.
+of this script so far (~101/s on 2026-07-21, ~57/s and then ~90/s across two 2026-07-23 runs). The
+2026-07-21 figure isn't a clean comparison point for "container variance" — `RSSMCell.step()`
+changed from a `tf.layers.rnn`-wrapped `.apply()` call to a direct `cell.call()` between that run
+and the two 2026-07-23 runs (§9, landed 2026-07-22). The two 2026-07-23 runs, both on the
+post-§9-fix code, are the valid same-code comparison, and their ~57/s vs. ~90/s spread is
+consistent with container-to-container CPU variance, not a code regression. Treat every absolute
+number here as this-container-this-run, not a portable hardware spec.
+
+**2026-07-24 update:** `summary.json` was overwritten twice on 2026-07-23 (once per commit), so the
+2026-07-21 (~372/~101 steps/sec) and first 2026-07-23 (~1,200 model-timesteps/sec) runs this note
+cites were no longer reproducible from the file itself. Per the PR #24 review, `benchmark.ts` now
+*appends* a keyed run record to `summary.json` (`{ runs: [...] }`) instead of overwriting it, and
+the three runs already referenced above (2026-07-21, and both 2026-07-23 runs) are backfilled into
+that history from their commits (`a99a4ff`, `82a9707`, `986528d` respectively) so every number cited
+in this note stays traceable to a run record. The `tf.variableGrads` leak flagged in the same review
+(`grads` was never disposed in the timed loop, only `value`) is also fixed as of this run, and each
+gradient benchmark now reports a `tensorLeakCheck` (tensor count immediately before vs. after the
+timed loop).
 
 Raw result (`experiments/2026-07-21-week3-stack-spike/summary.json`, freshest run):
 
