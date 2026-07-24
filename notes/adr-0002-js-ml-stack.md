@@ -396,7 +396,7 @@ a fix for `tensorflow/tfjs#1529`/`#3550`) — `test/model/rssm.test.ts` keeps a 
 test pinning it directly against raw `tf.layers.gruCell`/`tf.layers.rnn`, independent of `RSSMCell`,
 so it stays caught if any future code in this repo reaches for the wrapper again.
 
-## 10. Week-3 spike, closed out (2026-07-23): multi-step BPTT steps/sec is measured, and it's usable
+## 10. Week-3 spike, closed out (2026-07-23, corrected same day per PR #24 review): multi-step BPTT throughput is measured, and it's usable — but "usable" against proposal 0001's budget is replay-ratio-dependent, not fixed yet
 
 **[medium, self_checked, execution-confirmed]** §9 fixed multi-step gradient *correctness*; the
 other half of ADR-0002 decision 5's kill criterion — "usable steps/sec" — was still an open number,
@@ -407,39 +407,61 @@ chunk" to "longer than one" — no chunk length is specified anywhere in the rep
 file's pre-existing `BATCH = 16` assumption) at Arm-A dims (h=256, 8×4 categorical latent), batch 16,
 on this run's container (`tfjs-node` CPU backend).
 
-Confidence is `medium`, not `high`, for two reasons this note flags explicitly: (1) only 30 timed
+**Correction (same day, caught in @SakkarinKt's PR #24 review):** the version of this entry first
+committed today reported "env-steps/sec = chain length × gradient-steps/sec" and checked that
+directly against proposal `0001`'s ≤200K-env-steps-per-arm-per-seed budget. That's wrong — it
+silently assumes every one of the 16 batch rows in a gradient step is a distinct, never-replayed
+environment step (replay ratio 1), which is neither stated nor a realistic training setup. The
+benchmark measures `modelTimestepsPerSec = chainLength × BATCH × gradient-steps/sec` — how many
+(batch row, timestep) pairs the stack actually differentiates per second — and that's a genuinely
+stack-throughput number, not an environment-throughput one. Converting it to environment-steps/sec
+requires a **replay ratio** (how many times each collected transition is replayed through a gradient
+step, on average), which isn't fixed anywhere in this repo yet.
+
+Confidence is `medium`, not `high`, for reasons beyond the correction itself: (1) only 30 timed
 iterations per chain length (5 warmup) — an order-of-magnitude read, not a precision benchmark, given
-each iteration's cost scales with chain length; (2) the single-step figure moved from ~101 steps/sec
-(2026-07-21, a different container) to ~57 steps/sec measured in this same run — container-to-
-container CPU variance, not a regression in the code between those dates (nothing touching the
-forward/gradient path changed the arithmetic; §9's fix only changed *which* timesteps are
-differentiable, not the single-step path's op count). Treat the absolute numbers as this-container
-figures, not a portable hardware spec.
+each iteration's cost scales with chain length; (2) the single-step figure has moved across every run
+of this script so far (~101/s on 2026-07-21, ~57/s and then ~90/s across two 2026-07-23 runs, all
+different containers) with no change to the forward/gradient arithmetic between those dates —
+container-to-container CPU variance, not a code regression. Treat every absolute number here as
+this-container-this-run, not a portable hardware spec.
 
-Raw result (`experiments/2026-07-21-week3-stack-spike/summary.json`, this run):
+Raw result (`experiments/2026-07-21-week3-stack-spike/summary.json`, freshest run):
 
-| chain length | gradient-steps/sec | env-steps/sec (chain length × gradient-steps/sec) |
+| chain length | gradient-steps/sec | modelTimestepsPerSec (chain length × batch × gradient-steps/sec) |
 | --- | --- | --- |
-| 2 | 41.4 | 82.8 |
-| 4 | 17.7 | 70.8 |
-| 8 | 8.6 | 68.6 |
-| 16 | 4.6 | 73.1 |
-| 32 | 2.6 | 82.3 |
+| 2 | 58.2 | 1,862 |
+| 4 | 26.1 | 1,670 |
+| 8 | 14.0 | 1,789 |
+| 16 | 6.7 | 1,709 |
+| 32 | 3.7 | 1,900 |
 
-Env-steps/sec (the unit proposal `0001`'s training budget is denominated in) stays roughly flat
-across chain lengths at ~70–83/sec — expected, since total compute is ~linear in chain length and
-wrapper/dispatch overhead is a small, roughly constant fraction of it. Against proposal `0001`'s
-"target ≤200K environment steps per arm per seed... small enough for a laptop-CPU overnight run"
-budget: 200,000 ÷ ~75/sec ≈ 2,700 s ≈ **45 minutes** for one arm/seed's worth of environment steps at
-any of the swept chain lengths — far inside an overnight budget, with roughly an order of magnitude
-of headroom before "overnight" would be in question. **Reading ADR-0002 decision 5's "usable
-steps/sec" kill criterion against this: it does not fire either** — ties off the week-3 spike's last
-open number alongside §9's gradient-correctness result. This is a note, not an ADR edit: still
-`self_checked`, awaiting the same human-signoff treatment §9's finding got via the PR #23 review
-before it's folded into the formal ADR-0002 text.
+`modelTimestepsPerSec` stays roughly flat across chain lengths (~1,700–1,900 this run; ~1,200 on the
+initial same-day run before the container variance noted above) — expected, since total compute is
+~linear in chain length and wrapper/dispatch overhead is a small, roughly constant fraction of it.
+**On raw stack throughput, the kill criterion does not fire**: ~1,200–1,900 (batch row, timestep)
+pairs differentiated per second is not a slow stack by any reasonable reading.
 
-Caveat: this is throughput on synthetic fixed actions/targets with no real environment stepping,
-data loading, replay-buffer sampling, or loss computation beyond the toy `probs`-weighted sum used
-here — it bounds the RSSM forward/backward cost specifically, not the full training loop's
-steps/sec once the replay buffer (human's G2 module) and the real losses (priority 3) are wired in.
-Revisit once those land.
+Whether that's "usable" *against proposal `0001`'s specific overnight-run budget* depends on the
+replay ratio, which isn't decided: environment-steps/sec = modelTimestepsPerSec ÷ replay ratio, and
+200,000 environment steps takes 200,000 ÷ (modelTimestepsPerSec ÷ replay ratio) seconds. Using this
+run's ~1,800/sec as a round figure:
+
+| replay ratio | env-steps/sec | time for 200K env steps |
+| --- | --- | --- |
+| 16 | ~113 | ~30 min |
+| 512 | ~3.5 | ~16 h |
+
+Both endpoints are plausible training configurations in the literature (low-replay on-policy-ish
+setups vs. high-replay-ratio sample-efficient setups), and they bracket "comfortably inside an
+overnight run" and "right at the edge of one" respectively. **This is a note, not an ADR edit**:
+still `self_checked`, awaiting the same human-signoff treatment §9's finding got via the PR #23
+review before any of it is folded into the formal ADR-0002 text — and per the correction above, the
+right formal-ADR wording should say "stack throughput is usable; the overnight-budget check is
+contingent on a replay ratio not yet chosen," not "the budget check passes."
+
+Caveat, unchanged from the original entry: this is throughput on synthetic fixed actions/targets with
+no real environment stepping, data loading, replay-buffer sampling, or loss computation beyond the
+toy `probs`-weighted sum used here — it bounds the RSSM forward/backward cost specifically, not the
+full training loop's throughput once the replay buffer (human's G2 module) and the real losses
+(priority 3) are wired in. Revisit once those land, and once a replay ratio is chosen.

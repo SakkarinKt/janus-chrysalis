@@ -19,6 +19,18 @@
  * or proposal 0001 — only the ≤200K-env-steps-per-run total budget is), so
  * they're picked to span "shorter than a plausible training chunk" to
  * "longer than one," same spirit as this file's existing BATCH assumption.
+ *
+ * Correction (2026-07-23, PR #24 review): the multi-step benchmark reports
+ * `modelTimestepsPerSec` — chainLength * BATCH * gradient-steps/sec, i.e.
+ * how many (batch row, timestep) pairs the stack actually differentiates
+ * per second — not "environment-steps/sec". An earlier version of this
+ * comment equated the two, silently assuming every batch row is a distinct,
+ * never-replayed environment step (replay ratio 1). Converting to actual
+ * environment-steps/sec needs a replay ratio (how many times each collected
+ * transition is replayed through a gradient step, on average), which isn't
+ * fixed anywhere in this repo yet — see notes/adr-0002-js-ml-stack.md §10
+ * for the worked example of how much that choice moves the wall-clock
+ * estimate against proposal 0001's budget.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -151,7 +163,12 @@ function benchmarkMultiStepGradient(chainLength: number) {
   };
 
   for (let i = 0; i < MULTI_STEP_WARMUP_ITERS; i++) step();
-  return { chainLength, ...timeIters(MULTI_STEP_TIMED_ITERS, step) };
+  const timed = timeIters(MULTI_STEP_TIMED_ITERS, step);
+  // Actual (batch row, timestep) pairs differentiated per second — see the
+  // 2026-07-23 correction in this file's doc comment for why this isn't
+  // labeled "environment-steps/sec".
+  const modelTimestepsPerSec = timed.stepsPerSec * chainLength * BATCH;
+  return { chainLength, ...timed, modelTimestepsPerSec };
 }
 
 const forwardRollout = benchmarkForwardRollout();
@@ -173,7 +190,10 @@ const summary = {
       "2026-07-21 this was blocked (chaining step()+prior() across >=2 timesteps and differentiating " +
       "crashed tf.variableGrads); unblocked by 2026-07-22's direct-cell-call fix (ADR-0002 decision 5 " +
       "addendum) and measured here across a chain-length sweep (chunk length not specified anywhere " +
-      "in the repo, see this file's doc comment)",
+      "in the repo, see this file's doc comment). modelTimestepsPerSec = chainLength * BATCH * " +
+      "stepsPerSec is the (batch row, timestep) throughput the stack actually computes; converting " +
+      "to environment-steps/sec needs a replay ratio not yet fixed anywhere in this repo (2026-07-23 " +
+      "correction, see this file's doc comment and notes/adr-0002-js-ml-stack.md §10)",
     multiStepWarmupIters: MULTI_STEP_WARMUP_ITERS,
     multiStepTimedIters: MULTI_STEP_TIMED_ITERS,
     byChainLength: multiStepGradient,

@@ -266,15 +266,22 @@ training is unblocked on this stack with no new gradient math. Full root-cause a
 `notes/adr-0002-js-ml-stack.md` §9. Multi-step BPTT steps/sec (as opposed to the single-step number
 above) is still unmeasured — a natural next increment now that it's actually computable.
 
-**2026-07-23 update**: measured. `experiments/2026-07-21-week3-stack-spike/benchmark.ts` now sweeps
-truncated-BPTT chain lengths {2, 4, 8, 16, 32} at Arm-A dims; converting to this proposal's own
-units (environment-steps/sec = chain length × gradient-steps/sec) gives a roughly flat ~70–83
-env-steps/sec across every length swept (compute is ~linear in chain length, so this is expected).
-Against the ≤200K-env-steps-per-arm-per-seed budget above: ≈45 minutes per arm/seed at any swept
-chain length, well inside "overnight." **The kill criterion's steps/sec half doesn't fire either** —
-closes out the week-3 spike opened 2026-07-21, alongside §9's gradient-correctness result. Full
-numbers and caveats (container-to-container variance, synthetic-throughput-only scope — no real env
-stepping, replay sampling, or real losses yet) in `notes/adr-0002-js-ml-stack.md` §10.
-Medium confidence, not high: 30 timed iterations per chain length is an order-of-magnitude read, and
-the replay buffer (human's G2 module) and real losses (priority 3) aren't wired in yet, so this
-bounds RSSM forward/backward cost specifically, not the eventual full training loop's throughput.
+**2026-07-23 update**: measured, then corrected same day (PR #24 review). `benchmark.ts` now sweeps
+truncated-BPTT chain lengths {2, 4, 8, 16, 32} at Arm-A dims. The first version of this update
+converted the result straight to "environment-steps/sec" by multiplying chain length × gradient-
+steps/sec — wrong, since it silently assumed every batch row (`BATCH = 16`) is a distinct,
+never-replayed environment step. What's actually measured is `modelTimestepsPerSec` (chain length ×
+batch × gradient-steps/sec): ~1,700–1,900/sec this run, roughly flat across chain lengths as expected
+(compute is ~linear in chain length). **On raw stack throughput, the kill criterion's steps/sec half
+doesn't fire** — that's not a slow stack. But converting to this proposal's own
+≤200K-env-steps-per-arm-per-seed budget needs a **replay ratio**, not fixed anywhere yet: at replay
+ratio 16 it's ≈30 min/arm/seed (comfortably overnight); at replay ratio 512 it's ≈16 h (right at the
+edge of "overnight"). Both are plausible training configurations. So: stack throughput is usable:
+confirmed. Whether it clears *this proposal's* overnight-run budget specifically: contingent on a
+replay ratio this proposal doesn't fix yet — worth pinning down before the real Arm-A training runs,
+not before now. Full numbers, the correction, and caveats (container-to-container variance,
+synthetic-throughput-only scope — no real env stepping, replay sampling, or real losses yet) in
+`notes/adr-0002-js-ml-stack.md` §10. Medium confidence, not high: 30 timed iterations per chain
+length is an order-of-magnitude read, and the replay buffer (human's G2 module) and real losses
+(priority 3) aren't wired in yet, so this bounds RSSM forward/backward cost specifically, not the
+eventual full training loop's throughput.
