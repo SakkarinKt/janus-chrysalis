@@ -294,3 +294,25 @@ replay ratio 16 specifically — not an optimistic ratio-1 assumption. The repla
 itself (≈30 min at ratio 16, ≈16 h at ratio 512) was independently verified against the raw data and
 stands unchanged; only the diagnosis of *why* the first version's formula was wrong needed fixing.
 Full correction in `notes/adr-0002-js-ml-stack.md` §10.
+
+**2026-07-25 update — blocking**: per PR #25's review ("root-cause [the flaky multi-step gradient
+test] before priority 3 touches RSSM code"), root-caused it. It is not test-tolerance flakiness: with
+fixed weights instead of the test's random init, `RSSMCell`'s chained `step()`+`.prior()`
+differentiation across ≥2 timesteps has a real, deterministic gradient error that grows with chain
+length (clean at 1 step; `0.0035` → `0.0069` → `0.0109` max absolute error at 2/3/4 steps, epsilon
+`1e-4`), confirmed non-vanishing across an epsilon sweep spanning `1e-2`–`1e-6` (ruling out
+finite-difference truncation as the cause). Isolated to `tf.customGrad` (the straight-through
+estimator) interacting with the GRU cell's own repeated, shared-variable `call()` — removing either
+one independently makes the error vanish; only the combination reproduces it. Full evidence:
+`notes/adr-0002-js-ml-stack.md` §11, reproducible via
+`experiments/2026-07-25-customgrad-recurrence-bug/repro.ts`.
+
+This means §9's 2026-07-22 "kill criterion did not fire" read was based on a check that passed by
+chance (random, unseeded weights, only 3-of-9 elements checked, ~80% pass rate) rather than a
+correct computation. **Multi-step BPTT gradients for this proposal's Arm-A world model are not
+currently trustworthy**, which blocks priority 3 (RSSM losses trained via exactly this kind of
+chained differentiation) until resolved. Raised as a "Decisions needed" item in the 2026-07-25
+stand-up per `loop/GOAL.md`'s hard-kill-criterion handling — no custom-autograd alternative was
+attempted unilaterally. `test/model/rssm.test.ts`'s multi-step test now pins the bug deterministically
+(fixed weights, asserts the mismatch is present) instead of flaking on random init; `npm test` stays
+green, but green now means "the known bug still reproduces," not "multi-step gradients are correct."

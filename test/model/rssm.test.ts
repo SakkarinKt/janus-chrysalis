@@ -321,18 +321,44 @@ test(
 );
 
 test(
-  "RSSMCell: chaining step()+prior() across >=2 timesteps and differentiating through the chain " +
-    "matches finite differences — the week-3 spike's direct-cell-call fix (2026-07-22, processing " +
-    "PR #22's review) avoids the tfjs-layers RNN-wrapper bug documented below, so the kill criterion " +
-    "did not fire (supersedes notes/adr-0002-js-ml-stack.md §8's 'likely tripped' read; see §9)",
+  "regression pin: RSSMCell chaining step()+prior() across >=2 timesteps has a real, deterministic " +
+    "gradient-correctness bug — NOT the finite-difference-tolerance flakiness it looked like " +
+    "(2026-07-25 root-cause, per PR #25's 'root-cause test 44 before priority 3' review; see " +
+    "notes/adr-0002-js-ml-stack.md §11 and experiments/2026-07-25-customgrad-recurrence-bug/repro.ts " +
+    "for the full investigation). Isolated to straightThroughEstimator's tf.customGrad interacting " +
+    "with the GRU cell's own tidy()-wrapped call() when both are chained across timesteps sharing " +
+    "the same variables: removing tf.customGrad from the loop (feeding back plain softmax probs " +
+    "instead of the STE sample) makes the error vanish; a bare tf.customGrad chained with no GRU " +
+    "involved does not reproduce it either — it takes both together. This test uses FIXED (non-" +
+    "random) weights so it fails the same way every run, unlike the flaky version it replaces. " +
+    "Supersedes the 2026-07-22 'kill criterion did not fire' read (§9) for the >=2-timestep case: " +
+    "this is a 'Decisions needed' item, not resolved — do not delete or loosen this test to make it " +
+    "pass without a human decision (loop/GOAL.md: a tripped kill criterion is never self-resolved).",
   () => {
     const config = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
     const rssm = new RSSMCell(config);
     const priorHard = fixedHard(1, config.latentCategoricals, config.latentClasses);
 
+    // Force lazy build, then overwrite with fixed (non-random) weights so
+    // this test's outcome is reproducible run to run, unlike the version it
+    // replaces (random init meant it only failed ~20% of the time).
+    const det0 = rssm.step(rssm.initialState(1), [Action.Up]);
+    rssm.prior(det0);
+    const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }).cell;
+    const priorDense = (
+      rssm as unknown as { priorDense: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }
+    ).priorDense;
+    let offset = 0;
+    for (const w of [...cell.trainableWeights, ...priorDense.trainableWeights]) {
+      const size = w.val.shape.reduce((a, b) => a * b, 1);
+      const data = Array.from({ length: size }, (_, i) => 0.05 * (((i + offset) % 13) - 6));
+      w.val.assign(tf.tensor(data, w.val.shape));
+      offset += 7;
+    }
+
     function forward(): tf.Scalar {
       let state = rssm.initialState(1);
-      for (const action of [Action.Up, Action.Right] as Action[]) {
+      for (const action of [Action.Up, Action.Right, Action.Down] as Action[]) {
         const deterministic = rssm.step(state, [action]);
         const { sample } = rssm.prior(deterministic, priorHard);
         state = { deterministic, stochastic: sample };
@@ -340,26 +366,39 @@ test(
       return tf.sum(state.deterministic) as tf.Scalar;
     }
 
-    const ownedVariables = ownedVariablesAfter(forward);
-    const { grads } = tf.variableGrads(forward, ownedVariables);
+    const biasVariable = cell.trainableWeights.find((w) => w.name.includes("bias"))!.val;
+    const { grads } = tf.variableGrads(forward, [biasVariable]);
+    const original = Array.from(biasVariable.dataSync());
+    const analytic = Array.from(grads[biasVariable.name].dataSync());
+    const epsilon = 1e-4;
 
-    // Check only the GRU cell's own weights (kernel/recurrent_kernel/bias):
-    // with `priorHard` fixed, `prior()`'s `sample` forward value is the same
-    // constant regardless of `priorDense`'s weights (the STE finite-diff trap
-    // the "single training step" test above documents), so `priorDense`'s
-    // kernel/bias have a genuinely-zero finite-difference gradient here even
-    // though the analytic STE gradient routes a nonzero value back through
-    // them — not a bug, just not checkable by this construction.
-    const cellVariables = new Set(
-      (rssm as unknown as { cell: { trainableWeights: Array<{ val: tf.Variable }> } }).cell.trainableWeights.map(
-        (w) => w.val,
-      ),
-    );
-    const checkedVariables = ownedVariables.filter((v) => cellVariables.has(v));
-    assert.equal(checkedVariables.length, 3, "expected exactly the GRU cell's kernel/recurrent_kernel/bias");
-    for (const variable of checkedVariables) {
-      checkFiniteDifference(variable, grads[variable.name], forward);
+    let maxErr = 0;
+    for (let i = 0; i < original.length; i++) {
+      const plus = original.slice();
+      plus[i] += epsilon;
+      biasVariable.assign(tf.tensor(plus, biasVariable.shape));
+      const lossPlus = forward().arraySync() as number;
+
+      const minus = original.slice();
+      minus[i] -= epsilon;
+      biasVariable.assign(tf.tensor(minus, biasVariable.shape));
+      const lossMinus = forward().arraySync() as number;
+
+      biasVariable.assign(tf.tensor(original, biasVariable.shape));
+      const numeric = (lossPlus - lossMinus) / (2 * epsilon);
+      maxErr = Math.max(maxErr, Math.abs(numeric - analytic[i]));
     }
+
+    // Pinning the bug, not correctness: this asserts the mismatch IS present
+    // and well above float32/finite-difference noise (the single-step test's
+    // worst case is ~3e-4). If this now passes (maxErr small), the bug may
+    // have been fixed upstream or in this repo — that's worth its own note,
+    // but shouldn't silently flip this test green; update it deliberately.
+    assert.ok(
+      maxErr > 1e-3,
+      `expected the known chained-STE gradient bug to still reproduce (maxErr > 1e-3), got ${maxErr} — ` +
+        `if this is now small, the bug may be fixed; see notes/adr-0002-js-ml-stack.md §11 before treating that as good news`,
+    );
   },
 );
 

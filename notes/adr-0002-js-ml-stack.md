@@ -488,3 +488,70 @@ no real environment stepping, data loading, replay-buffer sampling, or loss comp
 toy `probs`-weighted sum used here — it bounds the RSSM forward/backward cost specifically, not the
 full training loop's throughput once the replay buffer (human's G2 module) and the real losses
 (priority 3) are wired in. Revisit once those land, and once a replay ratio is chosen.
+
+## 11. Root-cause of the flaky "chaining >=2 timesteps" test (2026-07-25): a real, deterministic gradient-correctness bug in the STE-feedback recurrence — supersedes §9's "kill criterion did not fire" for this case
+
+**[high, self_checked, execution-confirmed]** PR #25's review asked to root-cause the intermittent
+failure (2-of-4 runs) in `test/model/rssm.test.ts`'s multi-step finite-difference test before
+priority 3 (RSSM losses) touches this code again. Root cause found, and it is **not** a
+finite-difference tolerance issue: with fixed (non-random) weights instead of the test's original
+random init, `RSSMCell.step()`+`.prior()` chained across ≥2 timesteps and differentiated via
+`tf.variableGrads` produces a gradient that is deterministically, and increasingly, wrong as chain
+length grows. Full investigation script and raw numbers:
+`experiments/2026-07-25-customgrad-recurrence-bug/repro.ts` / `summary.json`.
+
+**Evidence it's a real bug, not finite-difference noise** (the standard test for this: a true
+truncation/rounding artifact shrinks as the differencing epsilon shrinks, down to where float32
+rounding takes over — usually somewhere in the 1e-3–1e-4 range for this kind of computation):
+sweeping epsilon from `1e-2` down to `1e-6` at chain length 4 gives max-error readings of `0.0104,
+0.0104, 0.0109, 0.0133, 0.0311` — flat (even growing slightly) across four orders of magnitude,
+never shrinking toward zero. A genuine discretization artifact would not look like this.
+
+**Evidence it scales with chain length** (fixed weights, epsilon `1e-4`, checking the GRU cell's own
+bias): chain length 1 → max error `0.00003` (clean); chain length 2 → `0.0035`; chain length 3 →
+`0.0069`; chain length 4 → `0.0109`. The single-step case (already covered by the "single training
+step" test) is unaffected — this is specific to chaining.
+
+**Isolated to `straightThroughEstimator`'s `tf.customGrad`, but only in combination with the GRU
+cell's own `tidy()`-wrapped `call()`** — neither alone reproduces it:
+
+- Replacing the STE-sampled `z_{t-1}` feedback with the plain (fully differentiable, no
+  `tf.customGrad`) softmax `probs` — identical recurrence otherwise, same chained `cell.call()` —
+  drops the error back to float32-noise level at every chain length tried (≤`0.0003`, vs. `0.0109`
+  for the STE version at chain length 4).
+- A **minimal** repro chaining `straightThroughEstimator` alone in a loop (no GRU cell, no
+  `RSSMCell`, just `x = straightThroughEstimator(mul(x, weight), hard)` repeated and
+  differentiated) shows **no** error at any chain length (≤`5e-8`, i.e. clean). `tf.customGrad`
+  chained by itself is fine.
+- So it takes both together: `tf.customGrad`'s output feeding into a `tf.layers.gruCell.call()`
+  (itself wrapped in its own `tidy()` scope, per `tfjs-layers/dist/layers/recurrent.js`'s
+  `GRUCell.call()`), repeated across timesteps with the same shared cell variables, inside one
+  `tf.variableGrads` trace. Using a **fresh** `hard` tensor object per timestep (same values,
+  different tensor identity) doesn't change the error — ruling out tensor-identity aliasing as the
+  mechanism. The precise internal reason (most likely some interaction between `tf.customGrad`'s
+  `save()`/`gradFunc` tape bookkeeping and `tidy()`'s scope-based tensor lifecycle management when
+  both nest inside a loop with shared variables) wasn't pinned down further — that would mean
+  reading `tfjs-core`'s tape/engine internals, which is a larger investigation than this run's
+  scope.
+
+**What this means for ADR-0002 decision 5**: §9 (2026-07-22) reported the direct-`cell.call()` fix
+made the ≥2-timestep case "match finite differences... across up to 4 chained steps" and concluded
+the week-3 kill criterion did not fire. That check used **random** weight initialization with no
+fixed seed and checked only 3 of the bias vector's 9 elements — it passed by chance often enough
+(~80% of runs) to read as "fixed," not because the underlying computation is correct. The kill
+criterion's "end-to-end gradient correctness" half is back open for the ≥2-timestep case, this time
+as a **silent** wrong-gradient bug rather than the loud crash §8 found — arguably worse, since a
+crash can't be trained through by accident.
+
+**Test fixed to be honest instead of flaky**: `test/model/rssm.test.ts`'s multi-step test now uses
+fixed (non-random) weights and asserts the mismatch **is** present and above `1e-3` — a regression
+pin analogous to the existing `tf.layers.rnn`-wrapper crash pin, not a correctness check. `npm test`
+stays 47/47 green, but green now means "the known bug still reproduces," not "multi-step gradients
+are correct." Deliberately not touched: `RSSMCell`'s production code, and no custom-autograd
+alternative to `tf.customGrad` was attempted — per `loop/GOAL.md`, a tripped kill criterion is
+raised as a "Decisions needed" item, not resolved unilaterally, and this arguably re-trips it.
+
+**Confidence**: `high` that the bug is real and reproducible (deterministic repro script, checked-in,
+re-runnable); `medium` on the proposed internal mechanism (`tf.customGrad` × `tidy()`-wrapped
+repeated layer calls) — that's the best-supported hypothesis from the isolation experiments run, not
+a confirmed tfjs-internals read.
