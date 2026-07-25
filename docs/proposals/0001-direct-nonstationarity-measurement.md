@@ -294,3 +294,25 @@ replay ratio 16 specifically — not an optimistic ratio-1 assumption. The repla
 itself (≈30 min at ratio 16, ≈16 h at ratio 512) was independently verified against the raw data and
 stands unchanged; only the diagnosis of *why* the first version's formula was wrong needed fixing.
 Full correction in `notes/adr-0002-js-ml-stack.md` §10.
+
+**2026-07-25 update**: per PR #25's review ("root-cause [the flaky multi-step gradient test] before
+priority 3 touches RSSM code"), root-caused it. **Not a bug, and not blocking** — an initial same-day
+diagnosis on PR #26 concluded otherwise (a real `tf.customGrad` gradient-correctness bug re-tripping
+ADR-0002 decision 5); that was wrong, caught in review, and corrected in the same PR before merge.
+The actual mechanism: `straightThroughEstimator`'s forward pass is defined to return exactly the
+fixed `hard` sample regardless of any weight, so once its output (`z_{t-1}`) feeds back into the next
+timestep, that path is numerically invariant to the weights being differentiated — while the STE's
+backward pass still injects its intentional proxy gradient (the softmax Jacobian) through it.
+Finite-differencing the chained forward pass can't see that injected gradient by construction — the
+"mismatch" (growing with chain length, non-vanishing across an epsilon sweep) is exactly the STE's
+by-design behavior, not a computation error. Confirmed directly (bumping a weight by `0.5` leaves the
+fed-back sample bit-for-bit unchanged; a construction with the same loss *value* but a detached,
+non-differentiable constant in place of the STE sample matches finite differences cleanly at every
+chain length). Full evidence: `notes/adr-0002-js-ml-stack.md` §11, reproducible via
+`experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts`.
+
+§9's 2026-07-22 "kill criterion did not fire" read stands — **ADR-0002 decision 5 stays closed,
+priority 3 is not blocked**. `test/model/rssm.test.ts`'s multi-step test now checks the GRU cell's
+gradient using the detached-constant construction (a genuine correctness check that passes because
+the computation is correct), rather than either the original flaky check or the briefly-shipped
+bug-pin. No "Decisions needed" item from this.

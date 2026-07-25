@@ -321,43 +321,68 @@ test(
 );
 
 test(
-  "RSSMCell: chaining step()+prior() across >=2 timesteps and differentiating through the chain " +
-    "matches finite differences — the week-3 spike's direct-cell-call fix (2026-07-22, processing " +
-    "PR #22's review) avoids the tfjs-layers RNN-wrapper bug documented below, so the kill criterion " +
-    "did not fire (supersedes notes/adr-0002-js-ml-stack.md §8's 'likely tripped' read; see §9)",
+  "RSSMCell: chaining step()+prior() across >=2 timesteps — the GRU cell's own gradient (kernel/" +
+    "recurrent_kernel/bias) matches finite differences once the recurrent z_{t-1} feedback is " +
+    "detached to a constant, sidestepping the STE forward/backward trap (2026-07-25, correcting a " +
+    "same-day misdiagnosis — see notes/adr-0002-js-ml-stack.md §11 and " +
+    "experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts). With `priorHard` fixed, " +
+    "straightThroughEstimator's forward VALUE is exactly `priorHard` regardless of any upstream " +
+    "weight (per its own doc comment: 'forward pass returns exactly hard') — so feeding its output " +
+    "forward into the next timestep makes that path numerically invariant to the weights being " +
+    "differentiated, while the STE's backward pass still injects a nonzero (intentional, by-design) " +
+    "softmax-Jacobian gradient through it. Naive finite-differencing the STE-forward chain therefore " +
+    "can't validate anything beyond what the single-step test already covers (`straightThroughEstimator`'s " +
+    "own gradient, checked directly against softmax) — the discrepancy IS the STE's designed proxy " +
+    "gradient, not a computation bug, and grows with chain length only because each additional " +
+    "timestep adds one more STE hop whose injected gradient the forward pass can't reflect. This test " +
+    "instead checks what CAN be validated: the GRU cell's own gradient through the chain, using a " +
+    "recurrent feedback value that is identical numerically to what `prior()` actually produces (so " +
+    "the forward pass — and hence the loss value — is unchanged) but is a literal constant on the " +
+    "backward pass, so finite-differencing it is meaningful.",
   () => {
     const config = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
     const rssm = new RSSMCell(config);
     const priorHard = fixedHard(1, config.latentCategoricals, config.latentClasses);
+    const priorHardFlat = priorHard.reshape([1, config.latentCategoricals * config.latentClasses]) as tf.Tensor2D;
 
+    // Force lazy build, then overwrite with fixed (non-random) weights —
+    // determinism isn't load-bearing for correctness here (the detached
+    // construction below is finite-difference-testable regardless of
+    // weights), but it keeps this test's failure mode reproducible if it
+    // ever does fail.
+    const det0 = rssm.step(rssm.initialState(1), [Action.Up]);
+    rssm.prior(det0);
+    const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }).cell;
+    const priorDense = (
+      rssm as unknown as { priorDense: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }
+    ).priorDense;
+    let offset = 0;
+    for (const w of [...cell.trainableWeights, ...priorDense.trainableWeights]) {
+      const size = w.val.shape.reduce((a, b) => a * b, 1);
+      const data = Array.from({ length: size }, (_, i) => 0.05 * (((i + offset) % 13) - 6));
+      w.val.assign(tf.tensor(data, w.val.shape));
+      offset += 7;
+    }
+
+    // `rssm.prior()` is still called each step (so priorDense's forward pass
+    // is exercised, matching what a real rollout computes), but its `sample`
+    // output is deliberately not what feeds the next state — `priorHardFlat`
+    // is, a tensor with no dependency on any weight. Confirmed by construction
+    // (not just by value) to equal `sample` numerically at every step, since
+    // `sample`'s forward value is defined to be exactly `priorHard`.
     function forward(): tf.Scalar {
       let state = rssm.initialState(1);
-      for (const action of [Action.Up, Action.Right] as Action[]) {
+      for (const action of [Action.Up, Action.Right, Action.Down] as Action[]) {
         const deterministic = rssm.step(state, [action]);
-        const { sample } = rssm.prior(deterministic, priorHard);
-        state = { deterministic, stochastic: sample };
+        rssm.prior(deterministic, priorHard);
+        state = { deterministic, stochastic: priorHardFlat };
       }
       return tf.sum(state.deterministic) as tf.Scalar;
     }
 
-    const ownedVariables = ownedVariablesAfter(forward);
-    const { grads } = tf.variableGrads(forward, ownedVariables);
-
-    // Check only the GRU cell's own weights (kernel/recurrent_kernel/bias):
-    // with `priorHard` fixed, `prior()`'s `sample` forward value is the same
-    // constant regardless of `priorDense`'s weights (the STE finite-diff trap
-    // the "single training step" test above documents), so `priorDense`'s
-    // kernel/bias have a genuinely-zero finite-difference gradient here even
-    // though the analytic STE gradient routes a nonzero value back through
-    // them — not a bug, just not checkable by this construction.
-    const cellVariables = new Set(
-      (rssm as unknown as { cell: { trainableWeights: Array<{ val: tf.Variable }> } }).cell.trainableWeights.map(
-        (w) => w.val,
-      ),
-    );
-    const checkedVariables = ownedVariables.filter((v) => cellVariables.has(v));
-    assert.equal(checkedVariables.length, 3, "expected exactly the GRU cell's kernel/recurrent_kernel/bias");
-    for (const variable of checkedVariables) {
+    const cellVariables = cell.trainableWeights.map((w) => w.val);
+    const { grads } = tf.variableGrads(forward, cellVariables);
+    for (const variable of cellVariables) {
       checkFiniteDifference(variable, grads[variable.name], forward);
     }
   },
