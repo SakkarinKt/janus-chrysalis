@@ -295,24 +295,24 @@ itself (≈30 min at ratio 16, ≈16 h at ratio 512) was independently verified 
 stands unchanged; only the diagnosis of *why* the first version's formula was wrong needed fixing.
 Full correction in `notes/adr-0002-js-ml-stack.md` §10.
 
-**2026-07-25 update — blocking**: per PR #25's review ("root-cause [the flaky multi-step gradient
-test] before priority 3 touches RSSM code"), root-caused it. It is not test-tolerance flakiness: with
-fixed weights instead of the test's random init, `RSSMCell`'s chained `step()`+`.prior()`
-differentiation across ≥2 timesteps has a real, deterministic gradient error that grows with chain
-length (clean at 1 step; `0.0035` → `0.0069` → `0.0109` max absolute error at 2/3/4 steps, epsilon
-`1e-4`), confirmed non-vanishing across an epsilon sweep spanning `1e-2`–`1e-6` (ruling out
-finite-difference truncation as the cause). Isolated to `tf.customGrad` (the straight-through
-estimator) interacting with the GRU cell's own repeated, shared-variable `call()` — removing either
-one independently makes the error vanish; only the combination reproduces it. Full evidence:
-`notes/adr-0002-js-ml-stack.md` §11, reproducible via
-`experiments/2026-07-25-customgrad-recurrence-bug/repro.ts`.
+**2026-07-25 update**: per PR #25's review ("root-cause [the flaky multi-step gradient test] before
+priority 3 touches RSSM code"), root-caused it. **Not a bug, and not blocking** — an initial same-day
+diagnosis on PR #26 concluded otherwise (a real `tf.customGrad` gradient-correctness bug re-tripping
+ADR-0002 decision 5); that was wrong, caught in review, and corrected in the same PR before merge.
+The actual mechanism: `straightThroughEstimator`'s forward pass is defined to return exactly the
+fixed `hard` sample regardless of any weight, so once its output (`z_{t-1}`) feeds back into the next
+timestep, that path is numerically invariant to the weights being differentiated — while the STE's
+backward pass still injects its intentional proxy gradient (the softmax Jacobian) through it.
+Finite-differencing the chained forward pass can't see that injected gradient by construction — the
+"mismatch" (growing with chain length, non-vanishing across an epsilon sweep) is exactly the STE's
+by-design behavior, not a computation error. Confirmed directly (bumping a weight by `0.5` leaves the
+fed-back sample bit-for-bit unchanged; a construction with the same loss *value* but a detached,
+non-differentiable constant in place of the STE sample matches finite differences cleanly at every
+chain length). Full evidence: `notes/adr-0002-js-ml-stack.md` §11, reproducible via
+`experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts`.
 
-This means §9's 2026-07-22 "kill criterion did not fire" read was based on a check that passed by
-chance (random, unseeded weights, only 3-of-9 elements checked, ~80% pass rate) rather than a
-correct computation. **Multi-step BPTT gradients for this proposal's Arm-A world model are not
-currently trustworthy**, which blocks priority 3 (RSSM losses trained via exactly this kind of
-chained differentiation) until resolved. Raised as a "Decisions needed" item in the 2026-07-25
-stand-up per `loop/GOAL.md`'s hard-kill-criterion handling — no custom-autograd alternative was
-attempted unilaterally. `test/model/rssm.test.ts`'s multi-step test now pins the bug deterministically
-(fixed weights, asserts the mismatch is present) instead of flaking on random init; `npm test` stays
-green, but green now means "the known bug still reproduces," not "multi-step gradients are correct."
+§9's 2026-07-22 "kill criterion did not fire" read stands — **ADR-0002 decision 5 stays closed,
+priority 3 is not blocked**. `test/model/rssm.test.ts`'s multi-step test now checks the GRU cell's
+gradient using the detached-constant construction (a genuine correctness check that passes because
+the computation is correct), rather than either the original flaky check or the briefly-shipped
+bug-pin. No "Decisions needed" item from this.

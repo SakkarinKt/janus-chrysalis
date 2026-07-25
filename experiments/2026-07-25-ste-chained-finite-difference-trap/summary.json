@@ -1,0 +1,78 @@
+{
+  "runs": [
+    {
+      "runId": "2026-07-25a",
+      "date": "2026-07-25",
+      "commit": null,
+      "purpose": "corrected root-cause of the flaky 'chaining step()+prior() across >=2 timesteps' test (PR #25 review) — confirms it's the straight-through estimator's known forward/backward mismatch, not a tfjs/tf.customGrad bug (retracts this directory's original 2026-07-25 conclusion, per @SakkarinKt's PR #26 review)",
+      "backend": "tensorflow",
+      "config": {
+        "deterministicSize": 3,
+        "latentCategoricals": 2,
+        "latentClasses": 3
+      },
+      "epsilon": 0.0001,
+      "forwardPassInvarianceToWeights": {
+        "before": [
+          [
+            1,
+            0,
+            0,
+            1,
+            0,
+            0
+          ]
+        ],
+        "after": [
+          [
+            1,
+            0,
+            0,
+            1,
+            0,
+            0
+          ]
+        ],
+        "identical": true
+      },
+      "byChainLength": [
+        {
+          "chainLength": 1,
+          "lossValuesIdentical": true,
+          "steMaxAbsErrorVsFiniteDifference": 0.000029356218874454498,
+          "detachedMaxAbsErrorVsFiniteDifference": 0.000029356218874454498,
+          "maxAbsDiffBetweenSTEAndDetachedAnalyticGradient": 0
+        },
+        {
+          "chainLength": 2,
+          "lossValuesIdentical": true,
+          "steMaxAbsErrorVsFiniteDifference": 0.003529965877532959,
+          "detachedMaxAbsErrorVsFiniteDifference": 0.0003255605697631836,
+          "maxAbsDiffBetweenSTEAndDetachedAnalyticGradient": 0.003575563430786133
+        },
+        {
+          "chainLength": 3,
+          "lossValuesIdentical": true,
+          "steMaxAbsErrorVsFiniteDifference": 0.0068590641021728516,
+          "detachedMaxAbsErrorVsFiniteDifference": 0.0004862546920776367,
+          "maxAbsDiffBetweenSTEAndDetachedAnalyticGradient": 0.0071263909339904785
+        },
+        {
+          "chainLength": 4,
+          "lossValuesIdentical": true,
+          "steMaxAbsErrorVsFiniteDifference": 0.010903596878051758,
+          "detachedMaxAbsErrorVsFiniteDifference": 0.0004744529724121094,
+          "maxAbsDiffBetweenSTEAndDetachedAnalyticGradient": 0.010429143905639648
+        }
+      ],
+      "minimalCustomGradIsolation": {
+        "degenerateUniformDy": {
+          "maxErr": 2.4018280697646333e-8
+        },
+        "nonDegenerateReweighted": {
+          "maxErr": 0.3608747720718384
+        }
+      }
+    }
+  ]
+}

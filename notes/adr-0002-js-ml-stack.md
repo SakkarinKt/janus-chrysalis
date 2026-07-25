@@ -489,69 +489,76 @@ toy `probs`-weighted sum used here — it bounds the RSSM forward/backward cost 
 full training loop's throughput once the replay buffer (human's G2 module) and the real losses
 (priority 3) are wired in. Revisit once those land, and once a replay ratio is chosen.
 
-## 11. Root-cause of the flaky "chaining >=2 timesteps" test (2026-07-25): a real, deterministic gradient-correctness bug in the STE-feedback recurrence — supersedes §9's "kill criterion did not fire" for this case
+## 11. Root-cause of the flaky "chaining >=2 timesteps" test (2026-07-25): the straight-through estimator's known forward/backward mismatch, not a bug — ADR-0002 decision 5 stays closed
 
 **[high, self_checked, execution-confirmed]** PR #25's review asked to root-cause the intermittent
 failure (2-of-4 runs) in `test/model/rssm.test.ts`'s multi-step finite-difference test before
-priority 3 (RSSM losses) touches this code again. Root cause found, and it is **not** a
-finite-difference tolerance issue: with fixed (non-random) weights instead of the test's original
-random init, `RSSMCell.step()`+`.prior()` chained across ≥2 timesteps and differentiated via
-`tf.variableGrads` produces a gradient that is deterministically, and increasingly, wrong as chain
-length grows. Full investigation script and raw numbers:
-`experiments/2026-07-25-customgrad-recurrence-bug/repro.ts` / `summary.json`.
+priority 3 (RSSM losses) touches this code again.
 
-**Evidence it's a real bug, not finite-difference noise** (the standard test for this: a true
-truncation/rounding artifact shrinks as the differencing epsilon shrinks, down to where float32
-rounding takes over — usually somewhere in the 1e-3–1e-4 range for this kind of computation):
-sweeping epsilon from `1e-2` down to `1e-6` at chain length 4 gives max-error readings of `0.0104,
-0.0104, 0.0109, 0.0133, 0.0311` — flat (even growing slightly) across four orders of magnitude,
-never shrinking toward zero. A genuine discretization artifact would not look like this.
+**This entry replaces an incorrect same-day diagnosis.** An earlier version of this section (and the
+PR #26 it shipped in) concluded the flakiness was a real, deterministic `tf.customGrad`
+gradient-correctness bug that grew with chain length and re-tripped ADR-0002 decision 5. That
+conclusion was wrong — caught in @SakkarinKt's PR #26 review, and confirmed wrong by direct
+experiment (see below). Kept as a visible correction rather than silently rewritten, per this
+project's usual practice (§8→§9, and PR #24/#25's replay-ratio corrections) — same standard applied
+in reverse here, since the mistake was mine, not the reviewer's.
 
-**Evidence it scales with chain length** (fixed weights, epsilon `1e-4`, checking the GRU cell's own
-bias): chain length 1 → max error `0.00003` (clean); chain length 2 → `0.0035`; chain length 3 →
-`0.0069`; chain length 4 → `0.0109`. The single-step case (already covered by the "single training
-step" test) is unaffected — this is specific to chaining.
+**The actual mechanism**: `straightThroughEstimator`'s forward pass is defined to return exactly
+`hard` (its own doc comment: "forward pass returns exactly hard"), unconditionally, regardless of
+`logits`. Every gradient-check test in this file fixes `hard` (via `priorHard`/`fixedHard`) so
+repeated forward calls are deterministic — which means the `sample` fed into the *next* timestep's
+recurrent input is a tensor with **zero dependence on any upstream weight**. Confirmed directly:
+bumping the GRU cell's bias by `0.5` leaves `sample` bit-for-bit unchanged
+(`experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts`'s
+`forwardPassInvarianceToWeights` check). Finite-differencing correctly reports zero sensitivity
+through that path. But the STE's entire purpose is to inject a nonzero, intentionally-biased
+backward gradient (the softmax Jacobian-vector product) through what would otherwise be a
+non-differentiable hard sample — "straight-through" *means* forward and backward take different
+paths. So `tf.variableGrads` correctly returns a nonzero analytic gradient for any weight upstream of
+a chained STE sample, while central-difference checking correctly returns (near-)zero sensitivity
+through that same path. The "mismatch" was never noise, and it isn't a bug — it's the STE's designed
+proxy gradient, which by construction no finite-difference check can see. `src/model/rssm.ts`
+already documented exactly this trap for the single-step case ("naive finite-difference checking
+*cannot* validate this function's gradient against its own forward pass"); the flaky test's actual
+defect was scope, not correctness — its carve-out excluded `priorDense`'s weights from the check (for
+this same reason) but didn't account for the GRU **cell's** weights also routing through a chained
+STE hop once `z_{t-1}` feeds back in at chain length ≥2. At chain length 1 the cell's weights never
+touch the STE at all (there's no feedback yet), so the original test's random-init version passed
+reliably there and only became a coin flip once chaining introduced the same trap one layer up.
 
-**Isolated to `straightThroughEstimator`'s `tf.customGrad`, but only in combination with the GRU
-cell's own `tidy()`-wrapped `call()`** — neither alone reproduces it:
+**Decisive check** (fixed weights, epsilon `1e-4`): building the *same* recurrence but replacing the
+STE-sampled feedback with a literal constant equal to `priorHard` (`prior()` is still called each
+step so its forward pass is exercised identically — only what feeds the *next* state differs) gives
+an **identical loss value** at every chain length, and its gradient matches finite differences
+closely (`≤0.0005`, chain lengths 1–4) — no chaining bug in the GRU/dense computation itself. The
+STE-forward's larger "error" against finite differences (`0.0035 → 0.0069 → 0.0109` at chain lengths
+2/3/4) is (near-)exactly `|analytic_STE − analytic_detached|` (`0.0036 → 0.0071 → 0.0104`) — the
+entire discrepancy **is** the STE's injected proxy gradient, not a discrepancy between two
+measurements of the same real quantity.
 
-- Replacing the STE-sampled `z_{t-1}` feedback with the plain (fully differentiable, no
-  `tf.customGrad`) softmax `probs` — identical recurrence otherwise, same chained `cell.call()` —
-  drops the error back to float32-noise level at every chain length tried (≤`0.0003`, vs. `0.0109`
-  for the STE version at chain length 4).
-- A **minimal** repro chaining `straightThroughEstimator` alone in a loop (no GRU cell, no
-  `RSSMCell`, just `x = straightThroughEstimator(mul(x, weight), hard)` repeated and
-  differentiated) shows **no** error at any chain length (≤`5e-8`, i.e. clean). `tf.customGrad`
-  chained by itself is fine.
-- So it takes both together: `tf.customGrad`'s output feeding into a `tf.layers.gruCell.call()`
-  (itself wrapped in its own `tidy()` scope, per `tfjs-layers/dist/layers/recurrent.js`'s
-  `GRUCell.call()`), repeated across timesteps with the same shared cell variables, inside one
-  `tf.variableGrads` trace. Using a **fresh** `hard` tensor object per timestep (same values,
-  different tensor identity) doesn't change the error — ruling out tensor-identity aliasing as the
-  mechanism. The precise internal reason (most likely some interaction between `tf.customGrad`'s
-  `save()`/`gradFunc` tape bookkeeping and `tidy()`'s scope-based tensor lifecycle management when
-  both nest inside a loop with shared variables) wasn't pinned down further — that would mean
-  reading `tfjs-core`'s tape/engine internals, which is a larger investigation than this run's
-  scope.
+**The original "isolation" experiments were confounded, not exculpatory**: replacing the STE sample
+with plain differentiable softmax `probs` "fixed" the mismatch only because that variant has no STE
+at all — nothing to disagree about. The "minimal `tf.customGrad`-alone, no GRU" repro that showed no
+error was a degenerate special case, not evidence chaining was required: with `loss = sum(x)`, the
+downstream gradient `dy` is uniform across the class dimension, which makes the STE backward
+formula's `softmax * (dy − ⟨dy, softmax⟩)` term vanish identically, at *any* chain length including
+1. Reweighting that same minimal repro's loss to `[1, 2, 3]` (breaking the degeneracy, still chain
+length 1, still no GRU anywhere) reproduces a `0.36` mismatch — proving the effect was never about
+chaining or `tidy()` interaction, just about a single STE call with a non-degenerate downstream
+gradient. Both isolation legs pointed at the wrong culprit for the same underlying reason.
 
-**What this means for ADR-0002 decision 5**: §9 (2026-07-22) reported the direct-`cell.call()` fix
-made the ≥2-timestep case "match finite differences... across up to 4 chained steps" and concluded
-the week-3 kill criterion did not fire. That check used **random** weight initialization with no
-fixed seed and checked only 3 of the bias vector's 9 elements — it passed by chance often enough
-(~80% of runs) to read as "fixed," not because the underlying computation is correct. The kill
-criterion's "end-to-end gradient correctness" half is back open for the ≥2-timestep case, this time
-as a **silent** wrong-gradient bug rather than the loud crash §8 found — arguably worse, since a
-crash can't be trained through by accident.
+**ADR-0002 decision 5 stays closed.** §9's (2026-07-22) "kill criterion did not fire" conclusion for
+the ≥2-timestep case is correct after all — multi-step BPTT gradients through `RSSMCell` are fine;
+the flaky test was checking something naive finite-differencing structurally cannot validate once
+z_{t-1} routes through the STE, not reporting a real defect. Priority 3 (RSSM losses) is not blocked.
 
-**Test fixed to be honest instead of flaky**: `test/model/rssm.test.ts`'s multi-step test now uses
-fixed (non-random) weights and asserts the mismatch **is** present and above `1e-3` — a regression
-pin analogous to the existing `tf.layers.rnn`-wrapper crash pin, not a correctness check. `npm test`
-stays 47/47 green, but green now means "the known bug still reproduces," not "multi-step gradients
-are correct." Deliberately not touched: `RSSMCell`'s production code, and no custom-autograd
-alternative to `tf.customGrad` was attempted — per `loop/GOAL.md`, a tripped kill criterion is
-raised as a "Decisions needed" item, not resolved unilaterally, and this arguably re-trips it.
+**Test fixed properly, not pinned**: `test/model/rssm.test.ts`'s multi-step test now checks the GRU
+cell's own gradient using the detached-constant construction above (identical forward pass, but the
+recurrent feedback carries no weight dependency on the backward pass either) — a genuine correctness
+check that passes because the computation is correct, not a regression pin asserting a known bug.
+The STE's own gradient stays covered by the existing single-step tests, which check it directly
+against `softmax(logits)` rather than through a chained forward pass.
 
-**Confidence**: `high` that the bug is real and reproducible (deterministic repro script, checked-in,
-re-runnable); `medium` on the proposed internal mechanism (`tf.customGrad` × `tidy()`-wrapped
-repeated layer calls) — that's the best-supported hypothesis from the isolation experiments run, not
-a confirmed tfjs-internals read.
+**Confidence**: `high` — every claim above is a direct, checked-in, re-runnable measurement
+(`experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts`), not inference from indirect
+signals.
