@@ -258,14 +258,19 @@ function ownedVariablesAfter(forward: () => tf.Scalar): tf.Variable[] {
   return names.map((name) => tf.engine().registeredVariables[name]);
 }
 
-/** Finite-difference-checks `grad` against `variable`'s first few components. */
+/**
+ * Finite-difference-checks `grad` against every component of `variable`.
+ * Previously capped at 3 components regardless of `variable`'s size (PR #26
+ * review: partial coverage was part of why the 2026-07-22 check passed by
+ * chance) — checking all of them is cheap at this model's scale (tens to
+ * low hundreds of elements per variable) and removes that gap.
+ */
 function checkFiniteDifference(variable: tf.Variable, grad: tf.Tensor, forward: () => tf.Scalar): void {
   const original = Array.from(variable.dataSync());
   const analytic = Array.from(grad.dataSync());
   const epsilon = 1e-4;
-  const numChecked = Math.min(3, original.length);
 
-  for (let i = 0; i < numChecked; i++) {
+  for (let i = 0; i < original.length; i++) {
     const plus = original.slice();
     plus[i] += epsilon;
     variable.assign(tf.tensor(plus, variable.shape));
