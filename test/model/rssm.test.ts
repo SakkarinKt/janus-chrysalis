@@ -264,6 +264,14 @@ function ownedVariablesAfter(forward: () => tf.Scalar): tf.Variable[] {
  * review: partial coverage was part of why the 2026-07-22 check passed by
  * chance) — checking all of them is cheap at this model's scale (tens to
  * low hundreds of elements per variable) and removes that gap.
+ *
+ * Each `forward()` call and the `variable.assign()` source tensors are
+ * wrapped in `tf.tidy` — full-coverage checking otherwise leaks one tensor
+ * per assign plus every intermediate `forward()` creates (PR #27 review:
+ * 7730 live tensors for the chained test's 135-element sweep). `assign`
+ * copies into the variable rather than adopting the source tensor (verified
+ * empirically: disposing the source after assign leaves the variable's
+ * value intact), so it's safe to dispose everything the closure creates.
  */
 function checkFiniteDifference(variable: tf.Variable, grad: tf.Tensor, forward: () => tf.Scalar): void {
   const original = Array.from(variable.dataSync());
@@ -271,17 +279,22 @@ function checkFiniteDifference(variable: tf.Variable, grad: tf.Tensor, forward: 
   const epsilon = 1e-4;
 
   for (let i = 0; i < original.length; i++) {
-    const plus = original.slice();
-    plus[i] += epsilon;
-    variable.assign(tf.tensor(plus, variable.shape));
-    const lossPlus = forward().arraySync() as number;
+    const lossPlus = tf.tidy(() => {
+      const plus = original.slice();
+      plus[i] += epsilon;
+      variable.assign(tf.tensor(plus, variable.shape));
+      return forward().arraySync() as number;
+    });
 
-    const minus = original.slice();
-    minus[i] -= epsilon;
-    variable.assign(tf.tensor(minus, variable.shape));
-    const lossMinus = forward().arraySync() as number;
+    const lossMinus = tf.tidy(() => {
+      const minus = original.slice();
+      minus[i] -= epsilon;
+      variable.assign(tf.tensor(minus, variable.shape));
+      return forward().arraySync() as number;
+    });
 
-    variable.assign(tf.tensor(original, variable.shape));
+    tf.tidy(() => variable.assign(tf.tensor(original, variable.shape)));
+
     const numeric = (lossPlus - lossMinus) / (2 * epsilon);
     assert.ok(
       Math.abs(numeric - analytic[i]) < 5e-3,
