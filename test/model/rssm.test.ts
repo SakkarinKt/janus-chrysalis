@@ -272,6 +272,9 @@ function ownedVariablesAfter(forward: () => tf.Scalar): tf.Variable[] {
  * copies into the variable rather than adopting the source tensor (verified
  * empirically: disposing the source after assign leaves the variable's
  * value intact), so it's safe to dispose everything the closure creates.
+ * `tf.tidy` itself never disposes `tf.Variable`s, even ones created inside
+ * it (PR #28 review), so this wrap stays safe even if a future `forward()`
+ * builds a variable lazily.
  */
 function checkFiniteDifference(variable: tf.Variable, grad: tf.Tensor, forward: () => tf.Scalar): void {
   const original = Array.from(variable.dataSync());
