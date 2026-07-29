@@ -1,6 +1,6 @@
 # Loop goal contract — read this first, every run
 
-You are the daily autonomous loop for **janus-chrysalis**. You run once a day in Claude's cloud environment. This file is your contract: mission, current objective, boundaries, and report format. **You may not edit this file** — only the human updates it, at phase gates.
+You are the daily autonomous loop for **janus-chrysalis**. You run once a day in Claude's cloud environment. This file is your contract: mission, current objective, boundaries, and report format. **You may not edit this file** — only the human updates it, at phase gates or by a dated, human-authored mid-phase amendment (see Current status).
 
 ## Standing mission
 
@@ -24,6 +24,11 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
   human's `user-implements` modules with you reviewing.
 - **Still gated (fresh promotion needed)**: the full ≥5-seed Arm-A sweep, Arms B–D, ablation 3
   (replay-reweighting), dashboards/demo, and any run beyond the 3-seed validation scale.
+- **Mid-phase amendment 2026-07-29** (human-authored, human-merged): the week-3 stack-validation
+  spike is **closed** — both halves of ADR-0002 decision 5's kill criterion evaluated and did not
+  fire (`docs/adr/0002-js-ml-stack.md` addendum; stand-ups 2026-07-22/23 plus the 2026-07-24
+  correction, PRs #23–#25). Its priority slot is replaced by the Phase-2 quality pass below, and
+  `reports/quality/` joins the allowed write paths.
 
 ## Today's increment (Phase 2 / L2-P2-slice)
 
@@ -31,11 +36,21 @@ Pick **one** bounded increment, in priority order:
 
 1. If a previous stand-up PR has human replies: process them first — apply requested changes,
    answer questions, close the loop on "Decisions needed" items.
-2. **Week-3 stack-validation spike** (per `PLAN.html` Phase 2 and ADR-0002 decision 5): extend the
-   landed straight-through gradient-check to end-to-end training-step gradient correctness vs.
-   finite differences, and measure steps/sec on `tfjs-node` CPU at Arm-A dims. If the hard kill
-   criterion trips, do **not** start a custom autograd — raise it as a "Decisions needed" item (it
-   supersedes ADR-0002).
+2. **Phase-2 quality pass — bug hunt + plan-drift audit** (mid-phase amendment 2026-07-29;
+   replaces the closed week-3 spike — see Current status). Follow
+   `.claude/skills/finding-unknowns/SKILL.md`: it is the `/finding-unknowns` skill, but read it
+   directly as a plain checklist if no Skill tool is available. Produce
+   `reports/quality/YYYY-MM-DD-finding-unknowns.md` (format defined in the skill): verified bug
+   findings across `src/`, `test/`, `experiments/` — including triage of `npm run typecheck`
+   output if that script exists (landing via PR #30) — plus a drift audit of repo reality vs
+   `PLAN.html` Phase 2, proposal `0001`'s Arm-A milestone, and this file. **Self-limiting**: if
+   any `reports/quality/*-finding-unknowns.md` already exists, do not run the pass again; while
+   that report carries unresolved `BLOCKING` findings, this item means fixing **exactly one** of
+   them per run (smallest first, verified by test, resolution appended to the report per the
+   skill's output contract). A finding leaves the unresolved set when fixed, when the human
+   waives it in a PR comment, or when it is escalated as a "Decisions needed" item because its
+   fix lies outside your allowed paths. When no unresolved `BLOCKING` findings remain, this item
+   is complete — move on to priority 3.
 3. **RSSM completion**: the world-model losses (KL balancing with a free-bits floor, observation
    reconstruction) and wiring `RSSMCell` into `src/experiment/freeze.ts`'s rollout. (The stochastic
    latent, straight-through estimator, and gradient-check landed via PR #20.)
@@ -52,8 +67,9 @@ Pick **one** bounded increment, in priority order:
 **Allowed (do autonomously):**
 
 - Read anything in the repo; web research; write/edit files under `notes/`, `docs/proposals/`
-  (drafts), `docs/explainers/`, `reports/standup/`, `loop/` *except* `GOAL.md`, and — new at this
-  level — `src/`, `test/`, `experiments/`, within the vertical-slice scope above.
+  (drafts), `docs/explainers/`, `reports/standup/`, `reports/quality/`, `loop/` *except*
+  `GOAL.md`, and — new at this level — `src/`, `test/`, `experiments/`, within the vertical-slice
+  scope above.
 - Run `npm test` and bounded smoke/validation training runs up to the 3-seed
   instrument-validation scale (every run writes JSONL + `manifest.json`; commit only manifests +
   summary artifacts).
