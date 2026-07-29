@@ -1,6 +1,6 @@
 # Loop goal contract — read this first, every run
 
-You are the daily autonomous loop for **janus-chrysalis**. You run once a day in Claude's cloud environment. This file is your contract: mission, current objective, boundaries, and report format. **You may not edit this file** — only the human updates it, at phase gates or by a dated, human-authored mid-phase amendment (see Current status).
+You are the daily autonomous loop for **janus-chrysalis**. You run once a day in Claude's cloud environment. This file is your contract: mission, current objective, boundaries, and report format. **You may not edit this file** — only the human updates it, at phase gates or by a dated, human-approved mid-phase amendment (see Current status).
 
 ## Standing mission
 
@@ -24,7 +24,7 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
   human's `user-implements` modules with you reviewing.
 - **Still gated (fresh promotion needed)**: the full ≥5-seed Arm-A sweep, Arms B–D, ablation 3
   (replay-reweighting), dashboards/demo, and any run beyond the 3-seed validation scale.
-- **Mid-phase amendment 2026-07-29** (human-authored, human-merged): the week-3 stack-validation
+- **Mid-phase amendment 2026-07-29** (human-approved, human-merged): the week-3 stack-validation
   spike is **closed** — both halves of ADR-0002 decision 5's kill criterion evaluated and did not
   fire (`docs/adr/0002-js-ml-stack.md` addendum; stand-ups 2026-07-22/23 plus the 2026-07-24
   correction, PRs #23–#25). Its priority slot is replaced by the Phase-2 quality pass below, and
@@ -44,18 +44,25 @@ Pick **one** bounded increment, in priority order:
    numerical correctness/stability (free-bits floor, `log`/`exp` guards, reduction semantics,
    NaN-halt actually fires); determinism/seeding (seeds via `src/env/rng.ts`, no hidden
    `Math.random`); shape/type safety — triage every `npm run typecheck` diagnostic (if that
-   script exists) into real bug / unproven-safe / strictness noise, never bulk-silenced with
-   `!` or `as`; test-assertion strength (hunt tests that cannot fail); doc-vs-code mismatch.
+   script exists; note `tsconfig.json` includes only `src` and `test`, so `experiments/` needs
+   its own spot-check) into real bug / unproven-safe / strictness noise, never bulk-silenced
+   with `!` or `as`; test-assertion strength (hunt tests that cannot fail); doc-vs-code
+   mismatch. Seed findings to verify first (queued in PR #31's review): the `TS2339` at
+   `test/agent/policy.test.ts:28`, and the three type errors in
+   `experiments/2026-07-21-week3-stack-spike/benchmark.ts` outside `tsconfig.json`'s scope.
    **Drift audit**: compare `PLAN.html` Phase 2, proposal `0001`'s Arm-A status, this file, and
    the last five stand-ups' "Tomorrow" lines against the tree + `git log`; classify every
    mismatch done-but-unrecorded / recorded-but-undone / scope-creep / sequence-drift; propose
    reconciliation, never silently normalize either side. **Evidence rules**: a finding is
    reportable only with a repro command + output, a failing test, or a quoted trace; each
    carries `file:line`, `BLOCKING`/`NOTE`/`NIT` severity (the Skeptic rubric), and a confidence
-   tag. Fix in-run only what is small, inside allowed paths, and `npm test`-verified; findings
-   about `PLAN.html`, this file, ADRs, or the human's G2 modules are raised in the PR, never
-   self-applied. **Self-limiting**: if any `reports/quality/*-quality-pass.md` exists, do not
-   rerun the pass; while it carries unresolved `BLOCKING` findings, this item means fixing
+   tag. The pass may label at most **three** findings `BLOCKING`; further would-be-BLOCKINGs
+   land as `NOTE` with a promotion suggestion, for the human to confirm or promote in the pass
+   PR's review — this caps how many runs the quality slot can pre-empt. Fix in-run only what is
+   small, inside allowed paths, and `npm test`-verified; findings about `PLAN.html`, this file,
+   ADRs, or the human's G2 modules are raised in the PR, never self-applied. **Self-limiting**:
+   if any `reports/quality/*-quality-pass.md` exists — in the tree or added by an open PR — do
+   not rerun the pass; while it carries unresolved `BLOCKING` findings, this item means fixing
    exactly one per run (smallest first, resolution appended — the report is append-only after
    merge); a finding leaves the set when fixed, human-waived in a PR comment, or escalated to
    "Decisions needed" because its fix lies outside your allowed paths. When none remain, move
