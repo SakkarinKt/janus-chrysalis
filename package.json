@@ -7,9 +7,14 @@
     "node": ">=22.18.0 <23"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.ts"
+    "test": "node --test test/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tensorflow/tfjs-node": "4.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
   }
 }
