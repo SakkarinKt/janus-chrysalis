@@ -7,6 +7,12 @@ name: CI
 # but is NOT YET added as a required check there — adding it is a
 # repo-settings change outside this loop's write scope (flagged in the
 # 2026-07-16 stand-up for the human to action).
+#
+# `typecheck` (PR #29 review, 2026-07-29) runs `tsc --noEmit` pinned to the
+# now-declared `typescript`/`@types/node` devDependencies. `continue-on-error:
+# true` — 43 pre-existing in-repo errors (mostly noUncheckedIndexedAccess
+# strictness) aren't fixed by this change, so it reports without blocking.
+# Promote to gating once those are cleared.
 
 on:
   pull_request:
@@ -44,3 +50,6 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
+      - name: Typecheck (non-gating)
+        run: npm run typecheck
+        continue-on-error: true
