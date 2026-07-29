@@ -37,20 +37,29 @@ Pick **one** bounded increment, in priority order:
 1. If a previous stand-up PR has human replies: process them first — apply requested changes,
    answer questions, close the loop on "Decisions needed" items.
 2. **Phase-2 quality pass — bug hunt + plan-drift audit** (mid-phase amendment 2026-07-29;
-   replaces the closed week-3 spike — see Current status). Follow
-   `.claude/skills/finding-unknowns/SKILL.md`: it is the `/finding-unknowns` skill, but read it
-   directly as a plain checklist if no Skill tool is available. Produce
-   `reports/quality/YYYY-MM-DD-finding-unknowns.md` (format defined in the skill): verified bug
-   findings across `src/`, `test/`, `experiments/` — including triage of `npm run typecheck`
-   output if that script exists (landing via PR #30) — plus a drift audit of repo reality vs
-   `PLAN.html` Phase 2, proposal `0001`'s Arm-A milestone, and this file. **Self-limiting**: if
-   any `reports/quality/*-finding-unknowns.md` already exists, do not run the pass again; while
-   that report carries unresolved `BLOCKING` findings, this item means fixing **exactly one** of
-   them per run (smallest first, verified by test, resolution appended to the report per the
-   skill's output contract). A finding leaves the unresolved set when fixed, when the human
-   waives it in a PR comment, or when it is escalated as a "Decisions needed" item because its
-   fix lies outside your allowed paths. When no unresolved `BLOCKING` findings remain, this item
-   is complete — move on to priority 3.
+   replaces the closed week-3 spike — see Current status). One run, one report:
+   `reports/quality/YYYY-MM-DD-quality-pass.md`. **Bug hunt** across `src/`, `test/`,
+   `experiments/`, six lenses in order: tensor/memory lifecycle (dispose `tf.variableGrads`
+   `value` *and* `grads` — PR #25's leak class; `tf.tidy` never disposes `Variable`s);
+   numerical correctness/stability (free-bits floor, `log`/`exp` guards, reduction semantics,
+   NaN-halt actually fires); determinism/seeding (seeds via `src/env/rng.ts`, no hidden
+   `Math.random`); shape/type safety — triage every `npm run typecheck` diagnostic (if that
+   script exists) into real bug / unproven-safe / strictness noise, never bulk-silenced with
+   `!` or `as`; test-assertion strength (hunt tests that cannot fail); doc-vs-code mismatch.
+   **Drift audit**: compare `PLAN.html` Phase 2, proposal `0001`'s Arm-A status, this file, and
+   the last five stand-ups' "Tomorrow" lines against the tree + `git log`; classify every
+   mismatch done-but-unrecorded / recorded-but-undone / scope-creep / sequence-drift; propose
+   reconciliation, never silently normalize either side. **Evidence rules**: a finding is
+   reportable only with a repro command + output, a failing test, or a quoted trace; each
+   carries `file:line`, `BLOCKING`/`NOTE`/`NIT` severity (the Skeptic rubric), and a confidence
+   tag. Fix in-run only what is small, inside allowed paths, and `npm test`-verified; findings
+   about `PLAN.html`, this file, ADRs, or the human's G2 modules are raised in the PR, never
+   self-applied. **Self-limiting**: if any `reports/quality/*-quality-pass.md` exists, do not
+   rerun the pass; while it carries unresolved `BLOCKING` findings, this item means fixing
+   exactly one per run (smallest first, resolution appended — the report is append-only after
+   merge); a finding leaves the set when fixed, human-waived in a PR comment, or escalated to
+   "Decisions needed" because its fix lies outside your allowed paths. When none remain, move
+   on to priority 3.
 3. **RSSM completion**: the world-model losses (KL balancing with a free-bits floor, observation
    reconstruction) and wiring `RSSMCell` into `src/experiment/freeze.ts`'s rollout. (The stochastic
    latent, straight-through estimator, and gradient-check landed via PR #20.)

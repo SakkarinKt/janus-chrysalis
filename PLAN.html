@@ -109,7 +109,7 @@
       <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback. <b>✓ closed 2026-07-23 — kill criterion did not fire</b> (stand-ups 2026-07-22–24, ADR-0002 addendum).</li>
       <li>RSSM world-model cell in TS on a small 2-agent discrete-action gridworld — proposal <code>0001</code>'s Arm-A instrument (see <code>loop/GOAL.md</code>). Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
       <li>JSONL telemetry + <code>manifest.json</code> per run — a run without a manifest didn't happen. No dashboard yet.</li>
-      <li><b>Quality pass (mid-phase amendment 2026-07-29):</b> one loop increment of codebase bug-hunting + plan-drift audit per <code>.claude/skills/finding-unknowns/SKILL.md</code>; verified findings land in <code>reports/quality/</code> with BLOCKING/NOTE/NIT severities; unresolved BLOCKING findings pre-empt further slice work (scheduling in <code>loop/GOAL.md</code> priority 2).</li>
+      <li><b>Quality pass (mid-phase amendment 2026-07-29):</b> one loop increment of codebase bug-hunting + plan-drift audit, specified inline in <code>loop/GOAL.md</code> priority 2; verified findings land in <code>reports/quality/</code> with BLOCKING/NOTE/NIT severities; unresolved BLOCKING findings pre-empt further slice work.</li>
     </ul>
     <div class="gate"><b>Gate G2</b> — loss decreases across 3 seeds; invariant tests green; the human has personally implemented ≥2 modules (replay buffer, λ-returns) with Claude reviewing.</div>
   </div>
