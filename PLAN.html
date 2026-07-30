@@ -83,7 +83,7 @@
     <span class="chip">Stack: JS/TS end-to-end</span>
     <span class="chip">Compute: local Mac + daily cloud loop</span>
     <span class="chip">License: MIT</span>
-    <span class="chip">Plan v1.1 · G1 2026-07-20</span>
+    <span class="chip">Plan v1.1.1 · G1 2026-07-20 · amended 2026-07-29</span>
   </div>
 
   <h2>Phases &amp; gates</h2>
@@ -106,9 +106,10 @@
   <div class="phase current">
     <h3>Phase 2 — Minimal vertical slice <span class="when">Weeks 3–7</span> <span class="status now">current</span></h3>
     <ul>
-      <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback.</li>
+      <li>Week-3 spike validates the stack (gradient correctness vs finite differences, steps/sec); hard kill criterion → custom autograd fallback. <b>✓ closed 2026-07-23 — kill criterion did not fire</b> (stand-ups 2026-07-22–24, ADR-0002 addendum).</li>
       <li>RSSM world-model cell in TS on a small 2-agent discrete-action gridworld — proposal <code>0001</code>'s Arm-A instrument (see <code>loop/GOAL.md</code>). Known-good invariants ported as executable tests: KL free-bits floor, WM/AC gradient separation, λ-returns, NaN → graceful halt. Continue/termination head from day one.</li>
       <li>JSONL telemetry + <code>manifest.json</code> per run — a run without a manifest didn't happen. No dashboard yet.</li>
+      <li><b>Quality pass (mid-phase amendment 2026-07-29):</b> one loop increment of codebase bug-hunting + plan-drift audit, specified inline in <code>loop/GOAL.md</code> priority 2; verified findings land in <code>reports/quality/</code> with BLOCKING/NOTE/NIT severities; unresolved BLOCKING findings pre-empt further slice work.</li>
     </ul>
     <div class="gate"><b>Gate G2</b> — loss decreases across 3 seeds; invariant tests green; the human has personally implemented ≥2 modules (replay buffer, λ-returns) with Claude reviewing.</div>
   </div>
@@ -135,7 +136,7 @@
   <div class="cols">
     <div class="card">
       <h4>Contract</h4>
-      <code>loop/GOAL.md</code> — standing mission + allow / approve / deny boundaries. Only the human edits it, at phase gates. One bounded increment per run; output is always a PR, never a push to <code>main</code>.
+      <code>loop/GOAL.md</code> — standing mission + allow / approve / deny boundaries. Only the human edits it — at phase gates or by dated mid-phase amendment. One bounded increment per run; output is always a PR, never a push to <code>main</code>.
     </div>
     <div class="card">
       <h4>Stand-up (async)</h4>
@@ -180,7 +181,7 @@
   </table></div>
 
   <footer>
-    janus-chrysalis · plan v1.1 · 2026-07-04 · G1 refresh 2026-07-20 · refreshed at each phase gate · decisions live in <code>docs/adr/</code>, this page is the readable front door.
+    janus-chrysalis · plan v1.1.1 · 2026-07-04 · G1 refresh 2026-07-20 · mid-phase amendment 2026-07-29 (quality pass) · refreshed at each phase gate · decisions live in <code>docs/adr/</code>, this page is the readable front door.
   </footer>
 </main>
 </body>

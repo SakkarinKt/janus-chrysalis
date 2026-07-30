@@ -30,6 +30,7 @@ See [PLAN.html](PLAN.html) for the full roadmap, phases, and gates.
 | `PLAN.html` | The roadmap, refreshed at each phase gate |
 | `loop/GOAL.md` | Standing goal + boundaries for the daily autonomous loop |
 | `reports/standup/` | One stand-up report per daily loop run |
+| `reports/quality/` | Findings reports from the Phase-2 quality pass |
 | `docs/adr/` | Architecture Decision Records (the signoff surface) |
 | `docs/explainers/` | Pre-implementation algorithm notes |
 | `docs/proposals/` | Research proposals (Phase 1 output, Gate G1 artifact) |
