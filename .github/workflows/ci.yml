@@ -9,10 +9,16 @@ name: CI
 # 2026-07-16 stand-up for the human to action).
 #
 # `typecheck` (PR #29 review, 2026-07-29) runs `tsc --noEmit` pinned to the
-# now-declared `typescript`/`@types/node` devDependencies. `continue-on-error:
-# true` — 43 pre-existing in-repo errors (mostly noUncheckedIndexedAccess
-# strictness) aren't fixed by this change, so it reports without blocking.
-# Promote to gating once those are cleared.
+# now-declared `typescript`/`@types/node` devDependencies. 43 pre-existing
+# in-repo errors (mostly noUncheckedIndexedAccess strictness) aren't fixed by
+# this change, so the step doesn't hard-fail on the full raw count yet.
+# Instead it runs `typecheck:ratchet` (PR #30 review, 2026-07-29), which
+# prints the same tsc output but only fails the step if the in-repo count
+# rises above that baseline of 43 — so it gates regressions without blocking
+# on the pre-existing backlog. Promote to gating on the raw `tsc` exit code
+# once that backlog is cleared. Coverage note: `tsconfig.json`'s `include` is
+# `["src", "test"]`, so this step (and its 43 baseline) does not check
+# `experiments/` at all — that dir needs its own spot-check.
 
 on:
   pull_request:
@@ -50,6 +56,5 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
-      - name: Typecheck (non-gating)
-        run: npm run typecheck
-        continue-on-error: true
+      - name: Typecheck (gated on regressions only, see comment above)
+        run: npm run typecheck:ratchet

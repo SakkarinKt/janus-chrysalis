@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node --test test/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:ratchet": "node scripts/typecheck-ratchet.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs-node": "4.22.0"
