@@ -14,11 +14,29 @@ const result = spawnSync("npx", ["tsc", "--noEmit"], { encoding: "utf8" });
 const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 process.stdout.write(output);
 
+// PR #32 review (2026-07-30): don't gate on tsc's exit code — it's 2 both at the 43-error
+// baseline and when tsc never ran at all (e.g. a broken tsconfig), so a swallowed spawn error
+// would otherwise print "0 errors" and exit 0. Gate on the contradiction instead: spawnSync
+// failed outright, or tsc reported non-zero status but the line-count parse found nothing.
+if (result.error || result.status === null) {
+  console.error(`Failed to run tsc: ${result.error ?? "process did not complete"}`);
+  process.exit(1);
+}
+
 const inRepoCount = output
   .split("\n")
   .filter((line) => line.includes("error TS") && !line.includes("node_modules")).length;
 
 console.log(`\nIn-repo typecheck errors: ${inRepoCount} (baseline: ${BASELINE_IN_REPO_ERRORS})`);
+
+if (result.status !== 0 && inRepoCount === 0) {
+  console.error(
+    "tsc exited non-zero but no in-repo error lines were parsed from its output — the parse " +
+      "is probably broken (output format changed) rather than the repo being clean. Failing " +
+      "closed instead of reporting a false 0.",
+  );
+  process.exit(1);
+}
 
 if (inRepoCount > BASELINE_IN_REPO_ERRORS) {
   console.error(
