@@ -23,9 +23,10 @@ if (result.error || result.status === null) {
   process.exit(1);
 }
 
-const inRepoCount = output
+const inRepoLines = output
   .split("\n")
-  .filter((line) => line.includes("error TS") && !line.includes("node_modules")).length;
+  .filter((line) => line.includes("error TS") && !line.includes("node_modules"));
+const inRepoCount = inRepoLines.length;
 
 console.log(`\nIn-repo typecheck errors: ${inRepoCount} (baseline: ${BASELINE_IN_REPO_ERRORS})`);
 
@@ -34,6 +35,24 @@ if (result.status !== 0 && inRepoCount === 0) {
     "tsc exited non-zero but no in-repo error lines were parsed from its output — the parse " +
       "is probably broken (output format changed) rather than the repo being clean. Failing " +
       "closed instead of reporting a false 0.",
+  );
+  process.exit(1);
+}
+
+// PR #33 review (2026-07-31): a broken tsconfig (e.g. an `include` that matches no files) makes
+// tsc exit 2 and emit a single config-level diagnostic (TS18003, or a bad `target`/malformed-JSON
+// error reported against tsconfig.json itself) instead of per-file `file(line,col): error TSxxxx`
+// lines. That diagnostic still contains "error TS", so it's counted into inRepoCount as 1 (or a
+// few) — comfortably under the 43 baseline, so the ratchet reports success even though zero files
+// were actually typechecked. Fail closed on any such line, regardless of count: config/CLI-level
+// diagnostics either name tsconfig.json as the offending file or (like TS18003) omit the
+// `file(line,col):` location prefix entirely that every per-file error carries.
+const configLevelLine = inRepoLines.find(
+  (line) => line.includes("tsconfig.json") || /^error TS\d+:/.test(line.trim()),
+);
+if (configLevelLine) {
+  console.error(
+    `tsc reported a config-level diagnostic, meaning typechecking may not have actually run: ${configLevelLine.trim()}`,
   );
   process.exit(1);
 }
