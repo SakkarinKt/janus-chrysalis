@@ -45,11 +45,17 @@ if (result.status !== 0 && inRepoCount === 0) {
 // lines. That diagnostic still contains "error TS", so it's counted into inRepoCount as 1 (or a
 // few) — comfortably under the 43 baseline, so the ratchet reports success even though zero files
 // were actually typechecked. Fail closed on any such line, regardless of count: config/CLI-level
-// diagnostics either name tsconfig.json as the offending file or (like TS18003) omit the
-// `file(line,col):` location prefix entirely that every per-file error carries.
-const configLevelLine = inRepoLines.find(
-  (line) => line.includes("tsconfig.json") || /^error TS\d+:/.test(line.trim()),
-);
+// diagnostics either name tsconfig.json as the offending file (as a `file(line,col):` location
+// prefix, not merely somewhere in the message text) or (like TS18003) omit the location prefix
+// entirely that every per-file error carries.
+//
+// PR #34 review (2026-08-01): `line.includes("tsconfig.json")` matched anywhere in the line, so a
+// per-file error whose *message text* happens to quote that literal (e.g. a string-literal type
+// error) was misclassified as a config-level diagnostic. Anchor to the location prefix instead.
+const configLevelLine = inRepoLines.find((line) => {
+  const trimmed = line.trim();
+  return /^[^(]*tsconfig\.json\(\d+,\d+\):/.test(trimmed) || /^error TS\d+:/.test(trimmed);
+});
 if (configLevelLine) {
   console.error(
     `tsc reported a config-level diagnostic, meaning typechecking may not have actually run: ${configLevelLine.trim()}`,
