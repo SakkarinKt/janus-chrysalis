@@ -20,7 +20,7 @@ export interface Position {
 export interface GridWorldConfig {
   /** Grid is gridSize x gridSize, origin at (0, 0). */
   gridSize: number;
-  /** Chebyshev-distance radius within which another entity is observable. */
+  /** Manhattan-distance radius within which another entity is observable. */
   viewRadius: number;
   /** Fixed episode length in steps; env is done after this many steps. */
   horizon: number;

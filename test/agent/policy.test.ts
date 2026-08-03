@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { RandomPolicy } from "../../src/agent/policy.ts";
+import type { Policy } from "../../src/agent/policy.ts";
 import { Action } from "../../src/env/types.ts";
 import { Rng } from "../../src/env/rng.ts";
 
@@ -24,6 +25,10 @@ test("RandomPolicy.act is driven by the passed-in rng, not internal state", () =
 });
 
 test("RandomPolicy has no update hook", () => {
-  const policy = new RandomPolicy();
+  // Typed as `Policy`, not `RandomPolicy`: the class itself declares no
+  // `update` property (only `Policy`'s optional signature does), so
+  // `policy.update` doesn't type-check against the concrete class — see
+  // reports/quality/2026-08-03-quality-pass.md.
+  const policy: Policy = new RandomPolicy();
   assert.equal(policy.update, undefined);
 });
