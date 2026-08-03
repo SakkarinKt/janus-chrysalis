@@ -334,7 +334,12 @@ test(
     const ownedVariables = ownedVariablesAfter(forward);
     assert.ok(ownedVariables.length > 0, "expected the forward pass to have built at least one trainable variable");
 
-    const { grads } = tf.variableGrads(forward, ownedVariables);
+    // `value` (the forward pass's loss scalar) isn't needed after the grads
+    // are pulled out — dispose it explicitly rather than letting the
+    // destructure silently drop it undisposed (PR #25's leak class; see
+    // reports/quality/2026-08-03-quality-pass.md).
+    const { value, grads } = tf.variableGrads(forward, ownedVariables);
+    value.dispose();
     for (const variable of ownedVariables) {
       checkFiniteDifference(variable, grads[variable.name], forward);
     }
@@ -402,7 +407,10 @@ test(
     }
 
     const cellVariables = cell.trainableWeights.map((w) => w.val);
-    const { grads } = tf.variableGrads(forward, cellVariables);
+    // See the single-step test above: dispose `value` explicitly instead of
+    // dropping it undisposed via destructuring.
+    const { value, grads } = tf.variableGrads(forward, cellVariables);
+    value.dispose();
     for (const variable of cellVariables) {
       checkFiniteDifference(variable, grads[variable.name], forward);
     }
