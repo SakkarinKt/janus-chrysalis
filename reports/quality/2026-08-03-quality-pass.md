@@ -229,3 +229,60 @@ Verified after all three fixes together: `npm test` → 47/47 pass; `npm run typ
 in-repo count 43 → 42, baseline (43) unchanged, exit 0 (script itself notes "Baseline could be
 lowered to 42" — not acted on here; `scripts/` isn't in this increment's allowed-paths list, and
 the ratchet gate is unaffected either way at the current count).
+
+## Resolution — 2026-08-04 (append-only; report itself unedited above)
+
+PR #36's review (@SakkarinKt, merging this report) corrected the sequencing above: with this report
+now landed, `reports/quality/` carries one unresolved BLOCKING finding, so per `loop/GOAL.md`'s
+self-limiting clause the *next* run's priority-2 slot is "fix exactly one" — finding #1, not
+deferred to priority 3 as this report's "not applied" note proposed. Processing that review reply
+was today's (2026-08-04) increment.
+
+**Finding #1 is fixed**, but not by the literal fix this report sketched. The sketch proposed
+threading an `Rng`-derived seed into `tf.multinomial(flatLogits, 1, seed)`. Implementing exactly
+that surfaced a new problem the sketch didn't anticipate: on this project's pinned
+`@tensorflow/tfjs-node@4.22.0`, `tf.multinomial` with an **identical numeric seed does not
+reliably reproduce the same draw** across repeated calls in one process — confirmed directly:
+
+```js
+const logits = tf.tensor2d([[1, 2, 3], [0, 0, 0]]);
+tf.multinomial(logits, 1, 42).arraySync(); // [[2], [2]]
+tf.multinomial(logits, 1, 42).arraySync(); // [[2], [0]] — same seed, second row differs
+```
+
+(Native TF's `Multinomial` op only guarantees determinism when a graph-level seed is also set;
+tfjs's `multinomial()` binding has no way to set one, so op-level `seed`/`seed2` alone still pull
+fresh entropy per call.) Shipping the literally-suggested fix would have compiled, "looked" fixed,
+and stayed exactly as non-reproducible as before finding #1 was ever raised — a worse outcome than
+leaving it open, since it would read as resolved.
+
+Implemented instead: `sampleHard()` now draws via the Gumbel-max trick
+(`argmax(logits + Gumbel noise)`, equivalent to `Categorical(softmax(logits))`), with the Gumbel
+noise's underlying uniforms drawn directly from the passed-in `rng.next()` — no TF-native random op
+in the reproducibility-critical path at all. Verified reproducible the same way (same `Rng` seed,
+two fresh calls, byte-identical output) and distributionally correct (3000 draws from skewed logits
+landed within 1% of the softmax proportions; see `test/model/rssm.test.ts`'s new
+"prior: an Rng derives the tf.multinomial seed..." test for the seeded-reproducibility half — its
+name is now slightly stale on the "tf.multinomial" mention given the implementation swap, kept
+because the test still documents the finding it closes).
+
+`RSSMCell.prior()`/`.posterior()` gained an optional third `rng` param (after the existing
+`fixedHard`), and `sampleHard()`/`sampleStraightThrough()` now require `rng` whenever `fixedHard`
+is omitted — enforced at runtime with a thrown error, not silently. Every non-`fixedHard` call site
+needed updating: `test/model/rssm.test.ts` (six call sites plus the `advance()` test helper, plus
+two new tests — one for the reproducibility property itself, one confirming the omitted-rng case
+throws rather than silently drawing unseeded), `experiments/2026-07-21-week3-stack-spike/benchmark.ts`
+(`benchmarkForwardRollout`'s throughput loop — reproducibility isn't load-bearing there, just needed
+a valid `rng` to not throw), and `experiments/2026-07-25-ste-chained-finite-difference-trap/repro.ts`
+(`assignDeterministicWeights`'s lazy-build-forcing call, sample discarded).
+
+Verified: `npm test` 49/49 (was 47/47 — two new tests); `npm run typecheck:ratchet` in-repo count
+unchanged at 42, exit 0; `npx tsc --noEmit` against a temporary `experiments`-only tsconfig
+(same technique this report's own Lens 4 recommended) still reports exactly 3 in `benchmark.ts` and
+7 in `repro.ts`, matching this report's original baseline — the rng threading added no new
+`experiments/` diagnostics. Tensor-leak-checked `sampleHard` directly (100 calls, `tf.memory()`
+before/after): 0 net tensors.
+
+Finding #1: **Fixed** — closed. 3 of 7 findings from this report remain open (#3, #4, #7 — all NOTE
+or NIT, none BLOCKING); no new BLOCKING findings raised this run (this was a "fix exactly one"
+cycle, not a new pass — see `loop/GOAL.md`'s self-limiting clause).
