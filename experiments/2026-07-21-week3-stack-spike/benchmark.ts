@@ -54,6 +54,7 @@ import { fileURLToPath } from "node:url";
 import tf from "@tensorflow/tfjs-node";
 import { RSSMCell } from "../../src/model/rssm.ts";
 import { Action } from "../../src/env/types.ts";
+import { Rng } from "../../src/env/rng.ts";
 
 // h≈256, z≈32 per PLAN.html's risk table ("Small dims (h≈256, z≈32)"). The
 // 8x4 categorical/class split (vs. e.g. 32x1 or 4x8) isn't specified
@@ -88,16 +89,23 @@ function timeIters(iters: number, fn: () => void): { iters: number; seconds: num
   return { iters, seconds, stepsPerSec: iters / seconds };
 }
 
-/** Forward-only imagination rollout: step() + prior(), no gradients. */
+/**
+ * Forward-only imagination rollout: step() + prior(), no gradients. Not a
+ * training run (see file doc comment), so this rng's seed is fixed rather
+ * than threaded from an actual run config — reproducibility of the sampled
+ * values doesn't matter here, only that `prior()`'s now-required rng arg
+ * (quality-pass finding #1) is supplied so the throughput loop doesn't throw.
+ */
 function benchmarkForwardRollout() {
   const rssm = new RSSMCell(ARM_A_CONFIG);
   const actions: Action[] = Array(BATCH).fill(Action.Up);
   let state = rssm.initialState(BATCH);
+  const rng = new Rng(1);
 
   const advance = () => {
     state = tf.tidy(() => {
       const deterministic = rssm.step(state, actions);
-      const { sample } = rssm.prior(deterministic);
+      const { sample } = rssm.prior(deterministic, undefined, rng);
       return { deterministic, stochastic: sample };
     });
   };

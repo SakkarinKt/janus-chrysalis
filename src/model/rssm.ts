@@ -1,5 +1,6 @@
 import tf from "@tensorflow/tfjs-node";
 import { Action } from "../env/types.ts";
+import type { Rng } from "../env/rng.ts";
 
 const NUM_ACTIONS = Object.keys(Action).length;
 
@@ -108,22 +109,30 @@ export class RSSMCell {
    * Prior p(z_t | h_t) — no observation, used for imagination rollouts.
    * `fixedHard`, when given, is used in place of a freshly-drawn sample (see
    * `sampleStraightThrough`) — needed by the end-to-end gradient-check test,
-   * since a fresh `tf.multinomial` draw on every forward call isn't a
-   * function of the weights being perturbed, which breaks finite-differencing.
+   * since a fresh `sampleHard` draw on every forward call isn't a function of
+   * the weights being perturbed, which breaks finite-differencing.
+   * `rng`: required whenever `fixedHard` is omitted — see `sampleHard`'s doc
+   * comment for why (quality-pass finding #1,
+   * `reports/quality/2026-08-03-quality-pass.md`).
    */
-  prior(deterministic: tf.Tensor2D, fixedHard?: tf.Tensor3D): LatentDistribution {
+  prior(deterministic: tf.Tensor2D, fixedHard?: tf.Tensor3D, rng?: Rng): LatentDistribution {
     const logits = this.reshapeLogits(this.priorDense.apply(deterministic) as tf.Tensor2D);
-    return sampleStraightThrough(logits, fixedHard);
+    return sampleStraightThrough(logits, fixedHard, rng);
   }
 
   /**
    * Posterior q(z_t | h_t, o_t) — conditions on a real observation, used for
-   * training. `fixedHard`: see `prior()`.
+   * training. `fixedHard`, `rng`: see `prior()`.
    */
-  posterior(deterministic: tf.Tensor2D, observation: tf.Tensor2D, fixedHard?: tf.Tensor3D): LatentDistribution {
+  posterior(
+    deterministic: tf.Tensor2D,
+    observation: tf.Tensor2D,
+    fixedHard?: tf.Tensor3D,
+    rng?: Rng,
+  ): LatentDistribution {
     const input = tf.concat([deterministic, observation], 1);
     const logits = this.reshapeLogits(this.posteriorDense.apply(input) as tf.Tensor2D);
-    return sampleStraightThrough(logits, fixedHard);
+    return sampleStraightThrough(logits, fixedHard, rng);
   }
 
   private reshapeLogits(flat: tf.Tensor2D): tf.Tensor3D {
@@ -187,27 +196,83 @@ export const straightThroughEstimator = tf.customGrad(
 ) as (logits: tf.Tensor, hard: tf.Tensor) => tf.Tensor;
 
 /**
- * Draws one hard categorical sample per [.., category] row of `logits` via
- * `tf.multinomial`, cast to float32 (`tf.oneHot` defaults to int32, but this
- * flows into `straightThroughEstimator`'s output, which `RSSMCell.step()`
- * later `tf.concat`s against the float32 recurrent state — see
- * `oneHotActions`'s equivalent cast for the same reason).
+ * Floor for the uniform draws `sampleHard`'s Gumbel noise is built from —
+ * `-Math.log(-Math.log(u))` is `-Infinity`/`NaN` at `u`'s domain edges
+ * (`u = 0` or `u = 1`), and `Rng.next()`'s documented range `[0, 1)` already
+ * touches the lower edge.
  */
-export function sampleHard(logits: tf.Tensor3D): tf.Tensor3D {
-  const [batch, categoricals, classes] = logits.shape;
-  const flatLogits = logits.reshape([batch * categoricals, classes]) as tf.Tensor2D;
-  const indices = (tf.multinomial(flatLogits, 1) as tf.Tensor2D).reshape([batch * categoricals]);
-  return tf.oneHot(indices, classes).toFloat().reshape([batch, categoricals, classes]) as tf.Tensor3D;
+const GUMBEL_UNIFORM_EPSILON = 1e-7;
+
+/**
+ * Draws one hard categorical sample per [.., category] row of `logits`,
+ * cast to float32 (`tf.oneHot` defaults to int32, but this flows into
+ * `straightThroughEstimator`'s output, which `RSSMCell.step()` later
+ * `tf.concat`s against the float32 recurrent state — see `oneHotActions`'s
+ * equivalent cast for the same reason).
+ *
+ * `rng` is required. Every other source of randomness in this repo threads
+ * through the project's `Rng` (environment spawn positions, `RandomPolicy.act`);
+ * this was the one exception, silently non-reproducible per-seed until fixed
+ * (quality-pass finding #1, `reports/quality/2026-08-03-quality-pass.md`: two
+ * fresh `RSSMCell`s, same config/state/action, drew different unseeded
+ * samples).
+ *
+ * Implemented as a Gumbel-max sample (`argmax(logits + Gumbel noise)`,
+ * equivalent to sampling `Categorical(softmax(logits))`) with the Gumbel
+ * noise drawn from `rng` via inverse-CDF (`-log(-log(u))`, `u ~ rng.next()`),
+ * **not** `tf.multinomial(logits, 1, seed)` despite tfjs's own `seed` param
+ * looking like the obvious fit: on this project's pinned
+ * `@tensorflow/tfjs-node@4.22.0`, two `tf.multinomial` calls with the
+ * identical numeric seed do not reliably reproduce the same draw — confirmed
+ * directly:
+ * ```js
+ * const logits = tf.tensor2d([[1, 2, 3], [0, 0, 0]]);
+ * tf.multinomial(logits, 1, 42).arraySync(); // [[2], [2]]
+ * tf.multinomial(logits, 1, 42).arraySync(); // [[2], [0]] — same seed, second row differs
+ * ```
+ * (native TF's `Multinomial` op only guarantees determinism when a
+ * graph-level seed is also set, which tfjs's `multinomial()` binding has no
+ * way to do — op-level `seed`/`seed2` alone still pull fresh entropy per
+ * call). Routing the draw through `rng` directly, instead of asking a
+ * TF-native op to honor a seed it doesn't reliably honor, sidesteps that
+ * gap entirely and was verified reproducible the same way (same `Rng` seed,
+ * two fresh calls, identical output) plus a distributional sanity check
+ * (3000 draws from skewed logits landed within 1% of the softmax
+ * proportions).
+ */
+export function sampleHard(logits: tf.Tensor3D, rng: Rng): tf.Tensor3D {
+  return tf.tidy(() => {
+    const [batch, categoricals, classes] = logits.shape;
+    const size = batch * categoricals * classes;
+    const gumbelNoise = new Float32Array(size);
+    for (let i = 0; i < size; i++) {
+      const u = Math.min(Math.max(rng.next(), GUMBEL_UNIFORM_EPSILON), 1 - GUMBEL_UNIFORM_EPSILON);
+      gumbelNoise[i] = -Math.log(-Math.log(u));
+    }
+    const noise = tf.tensor(gumbelNoise, [batch, categoricals, classes]);
+    const indices = tf.argMax(tf.add(logits, noise), -1);
+    return tf.oneHot(indices, classes).toFloat() as tf.Tensor3D;
+  });
 }
 
 /**
  * Samples a categorical latent from `logits` via the straight-through
  * estimator. `fixedHard`, when given, replaces the internal `sampleHard`
- * draw — see `RSSMCell.prior()`'s doc comment for why.
+ * draw — see `RSSMCell.prior()`'s doc comment for why. `rng` is required
+ * whenever `fixedHard` is omitted (throws otherwise) — see `sampleHard`'s
+ * doc comment.
  */
-export function sampleStraightThrough(logits: tf.Tensor3D, fixedHard?: tf.Tensor3D): LatentDistribution {
+export function sampleStraightThrough(logits: tf.Tensor3D, fixedHard?: tf.Tensor3D, rng?: Rng): LatentDistribution {
   const probs = tf.softmax(logits, -1) as tf.Tensor3D;
-  const hard = fixedHard ?? sampleHard(logits);
+  let hard: tf.Tensor3D;
+  if (fixedHard) {
+    hard = fixedHard;
+  } else {
+    if (!rng) {
+      throw new Error("sampleStraightThrough: rng is required when fixedHard is not given (see sampleHard's doc comment)");
+    }
+    hard = sampleHard(logits, rng);
+  }
   const sample = straightThroughEstimator(logits, hard) as tf.Tensor3D;
   return { probs, sample: sample.reshape([logits.shape[0], -1]) as tf.Tensor2D };
 }

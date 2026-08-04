@@ -47,6 +47,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import tf from "@tensorflow/tfjs-node";
 import { RSSMCell, straightThroughEstimator } from "../../src/model/rssm.ts";
+import { Rng } from "../../src/env/rng.ts";
 
 const CONFIG = { deterministicSize: 3, latentCategoricals: 2, latentClasses: 3 };
 const EPSILON = 1e-4;
@@ -68,7 +69,10 @@ function fillDeterministic(shape: number[], seedOffset: number): tf.Tensor {
 function assignDeterministicWeights(rssm: RSSMCell): void {
   const state0 = rssm.initialState(1);
   const det0 = rssm.step(state0, [1]);
-  rssm.prior(det0);
+  // Only forces priorDense's lazy build (weights are overwritten below); the
+  // sample this draws is discarded, so the rng's seed is arbitrary — but
+  // prior() requires one when fixedHard is omitted (quality-pass finding #1).
+  rssm.prior(det0, undefined, new Rng(1));
   const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ val: tf.Variable }> } }).cell;
   const priorDense = (rssm as unknown as { priorDense: { trainableWeights: Array<{ val: tf.Variable }> } }).priorDense;
   let offset = 0;

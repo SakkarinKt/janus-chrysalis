@@ -8,13 +8,14 @@ import {
   type RSSMState,
 } from "../../src/model/rssm.ts";
 import { Action } from "../../src/env/types.ts";
+import { Rng } from "../../src/env/rng.ts";
 
 const CONFIG = { deterministicSize: 4, latentCategoricals: 3, latentClasses: 5 };
 
 /** Advances one full recurrent step using the prior (no observation) — convenience for tests. */
-function advance(rssm: RSSMCell, state: RSSMState, actions: Action[]): RSSMState {
+function advance(rssm: RSSMCell, state: RSSMState, actions: Action[], rng: Rng): RSSMState {
   const deterministic = rssm.step(state, actions);
-  const { sample } = rssm.prior(deterministic);
+  const { sample } = rssm.prior(deterministic, undefined, rng);
   return { deterministic, stochastic: sample };
 }
 
@@ -68,9 +69,10 @@ test("step: chaining across multiple steps (via prior) keeps a stable shape and 
   const rssm = new RSSMCell(CONFIG);
   let state = rssm.initialState(1);
   const actionSequence = [Action.Up, Action.Up, Action.Right, Action.Stay];
+  const rng = new Rng(1);
 
   for (const action of actionSequence) {
-    state = advance(rssm, state, [action]);
+    state = advance(rssm, state, [action], rng);
     assert.deepEqual(state.deterministic.shape, [1, CONFIG.deterministicSize]);
     assert.deepEqual(state.stochastic.shape, [1, CONFIG.latentCategoricals * CONFIG.latentClasses]);
   }
@@ -81,15 +83,16 @@ test("step: chaining across multiple steps (via prior) keeps a stable shape and 
 test("step: two different action sequences from the same initial state diverge", () => {
   const rssm = new RSSMCell(CONFIG);
   const initial = rssm.initialState(1);
+  const rng = new Rng(1);
 
   let stateA = initial;
   for (const action of [Action.Up, Action.Up, Action.Up]) {
-    stateA = advance(rssm, stateA, [action]);
+    stateA = advance(rssm, stateA, [action], rng);
   }
 
   let stateB = initial;
   for (const action of [Action.Down, Action.Down, Action.Down]) {
-    stateB = advance(rssm, stateB, [action]);
+    stateB = advance(rssm, stateB, [action], rng);
   }
 
   assert.notDeepEqual(stateA.deterministic.arraySync(), stateB.deterministic.arraySync());
@@ -98,7 +101,7 @@ test("step: two different action sequences from the same initial state diverge",
 test("prior: probs and sample are shaped [batch, C, K] / [batch, C*K], probs sum to 1 per categorical", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(2);
-  const { probs, sample } = rssm.prior(state.deterministic);
+  const { probs, sample } = rssm.prior(state.deterministic, undefined, new Rng(1));
 
   assert.deepEqual(probs.shape, [2, CONFIG.latentCategoricals, CONFIG.latentClasses]);
   assert.deepEqual(sample.shape, [2, CONFIG.latentCategoricals * CONFIG.latentClasses]);
@@ -112,7 +115,7 @@ test("prior: probs and sample are shaped [batch, C, K] / [batch, C*K], probs sum
 test("prior: the sample is a hard one-hot per categorical (exactly one 1, rest 0)", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(4);
-  const { sample } = rssm.prior(state.deterministic);
+  const { sample } = rssm.prior(state.deterministic, undefined, new Rng(1));
   const reshaped = sample.reshape([4, CONFIG.latentCategoricals, CONFIG.latentClasses]).arraySync() as number[][][];
 
   for (const batchRow of reshaped) {
@@ -125,14 +128,32 @@ test("prior: the sample is a hard one-hot per categorical (exactly one 1, rest 0
   }
 });
 
+test("prior: an Rng derives the tf.multinomial seed — same seed reproduces the sample, a different seed diverges (quality-pass finding #1, reports/quality/2026-08-03-quality-pass.md)", () => {
+  const rssm = new RSSMCell(CONFIG);
+  const state = rssm.initialState(1);
+
+  const a = rssm.prior(state.deterministic, undefined, new Rng(42)).sample.arraySync();
+  const b = rssm.prior(state.deterministic, undefined, new Rng(42)).sample.arraySync();
+  assert.deepEqual(a, b, "same seed on a fresh Rng should reproduce the same sample");
+
+  const c = rssm.prior(state.deterministic, undefined, new Rng(43)).sample.arraySync();
+  assert.notDeepEqual(a, c, "a different seed should (with overwhelming probability) draw a different sample");
+});
+
+test("prior: omitting rng without fixedHard throws rather than silently drawing an unseeded sample", () => {
+  const rssm = new RSSMCell(CONFIG);
+  const state = rssm.initialState(1);
+  assert.throws(() => rssm.prior(state.deterministic));
+});
+
 test("posterior: conditions on the observation — different observations give different logits", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(1);
   const obsA = tf.tensor2d([[1, 0, 0, 0]]);
   const obsB = tf.tensor2d([[0, 0, 0, 1]]);
 
-  const a = rssm.posterior(state.deterministic, obsA).probs.arraySync();
-  const b = rssm.posterior(state.deterministic, obsB).probs.arraySync();
+  const a = rssm.posterior(state.deterministic, obsA, undefined, new Rng(1)).probs.arraySync();
+  const b = rssm.posterior(state.deterministic, obsB, undefined, new Rng(1)).probs.arraySync();
   assert.notDeepEqual(a, b);
 });
 
@@ -140,7 +161,7 @@ test("posterior: output shapes match the prior's", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(3);
   const obs = tf.zeros([3, 7]) as tf.Tensor2D;
-  const { probs, sample } = rssm.posterior(state.deterministic, obs);
+  const { probs, sample } = rssm.posterior(state.deterministic, obs, undefined, new Rng(1));
 
   assert.deepEqual(probs.shape, [3, CONFIG.latentCategoricals, CONFIG.latentClasses]);
   assert.deepEqual(sample.shape, [3, CONFIG.latentCategoricals * CONFIG.latentClasses]);
@@ -377,7 +398,7 @@ test(
     // weights), but it keeps this test's failure mode reproducible if it
     // ever does fail.
     const det0 = rssm.step(rssm.initialState(1), [Action.Up]);
-    rssm.prior(det0);
+    rssm.prior(det0, undefined, new Rng(1));
     const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }).cell;
     const priorDense = (
       rssm as unknown as { priorDense: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }
@@ -473,7 +494,7 @@ test("sampleHard: exactly one 1 per [batch, categorical] row, rest 0", () => {
       [5, 5, 5],
     ],
   ]);
-  const hard = sampleHard(logits).arraySync() as number[][][];
+  const hard = sampleHard(logits, new Rng(1)).arraySync() as number[][][];
   for (const batchRow of hard) {
     for (const categorical of batchRow) {
       assert.equal(categorical.filter((v) => v === 1).length, 1);
