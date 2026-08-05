@@ -128,7 +128,7 @@ test("prior: the sample is a hard one-hot per categorical (exactly one 1, rest 0
   }
 });
 
-test("prior: an Rng derives the tf.multinomial seed — same seed reproduces the sample, a different seed diverges (quality-pass finding #1, reports/quality/2026-08-03-quality-pass.md)", () => {
+test("prior: an Rng-seeded Gumbel-max draw reproduces the sample under the same seed, diverges under a different one (quality-pass finding #1, reports/quality/2026-08-03-quality-pass.md; renamed from its earlier 'tf.multinomial seed' name per PR #37's review — sampleHard no longer uses tf.multinomial)", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(1);
 
