@@ -34,6 +34,19 @@ export interface LatentDistribution {
 }
 
 /**
+ * How `prior()`/`posterior()` obtain their hard sample: either draw a fresh
+ * one via `rng` (the normal case) or use a caller-fixed `fixedHard` (finite-
+ * difference/gradient-check tests, which need a deterministic sample across
+ * repeated forward calls — see `sampleStraightThrough`'s doc comment).
+ * Required as a discriminated union, not two optional params, so that
+ * omitting `rng` when not supplying `fixedHard` is a compile error rather
+ * than a runtime throw — see docs/explainers/0005-world-model-rollout-wiring.md
+ * (closes PR #37's review follow-up 1, quality-pass finding #1's `rng`
+ * requirement was previously only enforced at runtime).
+ */
+export type LatentSampleSource = { rng: Rng } | { fixedHard: tf.Tensor3D };
+
+/**
  * The RSSM cell: a GRU-based deterministic recurrence plus a categorical
  * stochastic latent with prior/posterior heads (DreamerV3-style), per PR #14's
  * review ("split the cell as you proposed — struct/forward-pass, then STE +
@@ -55,6 +68,21 @@ export interface LatentDistribution {
  * `GRUCell` is still the mature, tested primitive per
  * notes/rssm-vs-ssm-implementation-robustness.md §3 — only the wrapper
  * around it changed.
+ *
+ * **Tensor lifecycle contract (quality-pass finding #3,
+ * `reports/quality/2026-08-03-quality-pass.md`): `step()`, `prior()`, and
+ * `posterior()` dispose none of their own intermediates** (the
+ * `tf.concat`-built recurrent input, the dense heads' internal activations).
+ * Every non-training call site (benchmarks, tests) wraps its call in
+ * `tf.tidy`. The one production call site, `src/model/worldModel.ts`'s
+ * `WorldModel.step()`, differentiates through these calls via
+ * `tf.variableGrads`, which itself needs those intermediates to stay alive
+ * until backward pass completes — so it wraps the *whole*
+ * `tf.variableGrads` call (forward + backward together) in one outer
+ * `tf.tidy`, `tf.keep()`-ing only the two tensors that must outlive it (the
+ * next `RSSMState`). Wrapping only the differentiated forward function
+ * itself in `tf.tidy` would dispose those intermediates *before* the
+ * backward pass runs and is not safe.
  */
 export class RSSMCell {
   readonly config: RSSMConfig;
@@ -107,36 +135,48 @@ export class RSSMCell {
 
   /**
    * Prior p(z_t | h_t) — no observation, used for imagination rollouts.
-   * `fixedHard`, when given, is used in place of a freshly-drawn sample (see
-   * `sampleStraightThrough`) — needed by the end-to-end gradient-check test,
-   * since a fresh `sampleHard` draw on every forward call isn't a function of
-   * the weights being perturbed, which breaks finite-differencing.
-   * `rng`: required whenever `fixedHard` is omitted — see `sampleHard`'s doc
-   * comment for why (quality-pass finding #1,
-   * `reports/quality/2026-08-03-quality-pass.md`).
+   * `source`: either `{ rng }` to draw a fresh sample, or `{ fixedHard }` to
+   * use a caller-fixed sample in its place — needed by the end-to-end
+   * gradient-check test, since a fresh `sampleHard` draw on every forward
+   * call isn't a function of the weights being perturbed, which breaks
+   * finite-differencing. See `LatentSampleSource`'s doc comment for why this
+   * is a required union rather than two optional params.
    */
-  prior(deterministic: tf.Tensor2D, fixedHard?: tf.Tensor3D, rng?: Rng): LatentDistribution {
+  prior(deterministic: tf.Tensor2D, source: LatentSampleSource): LatentDistribution {
     const logits = this.reshapeLogits(this.priorDense.apply(deterministic) as tf.Tensor2D);
-    return sampleStraightThrough(logits, fixedHard, rng);
+    return sampleStraightThrough(logits, source);
   }
 
   /**
    * Posterior q(z_t | h_t, o_t) — conditions on a real observation, used for
-   * training. `fixedHard`, `rng`: see `prior()`.
+   * training. `source`: see `prior()`.
    */
-  posterior(
-    deterministic: tf.Tensor2D,
-    observation: tf.Tensor2D,
-    fixedHard?: tf.Tensor3D,
-    rng?: Rng,
-  ): LatentDistribution {
+  posterior(deterministic: tf.Tensor2D, observation: tf.Tensor2D, source: LatentSampleSource): LatentDistribution {
     const input = tf.concat([deterministic, observation], 1);
     const logits = this.reshapeLogits(this.posteriorDense.apply(input) as tf.Tensor2D);
-    return sampleStraightThrough(logits, fixedHard, rng);
+    return sampleStraightThrough(logits, source);
   }
 
   private reshapeLogits(flat: tf.Tensor2D): tf.Tensor3D {
     return flat.reshape([flat.shape[0], this.config.latentCategoricals, this.config.latentClasses]);
+  }
+
+  /**
+   * Every trainable `tf.Variable` across the GRU cell and both dense heads —
+   * for `tf.variableGrads(fn, varList)` callers (`src/model/worldModel.ts`).
+   * Only meaningful after the layers have built (their first `step()`/
+   * `prior()`/`posterior()` call) — calling this before that returns
+   * whatever subset has built so far, which is why `WorldModel`'s
+   * constructor forces a build with a throwaway forward pass before reading
+   * this.
+   */
+  trainableWeights(): tf.Variable[] {
+    // tfjs-layers' LayerVariable.val is `protected`, not part of its public
+    // type — reached the same way test/model/rssm.test.ts's helpers already
+    // do (`as unknown as {...}`), not a new access pattern.
+    const weightsOf = (layer: unknown): tf.Variable[] =>
+      (layer as { trainableWeights: Array<{ val: tf.Variable }> }).trainableWeights.map((w) => w.val);
+    return [...weightsOf(this.cell), ...weightsOf(this.priorDense), ...weightsOf(this.posteriorDense)];
   }
 }
 
@@ -239,40 +279,45 @@ const GUMBEL_UNIFORM_EPSILON = 1e-7;
  * two fresh calls, identical output) plus a distributional sanity check
  * (3000 draws from skewed logits landed within 1% of the softmax
  * proportions).
+ *
+ * The JS loop below only draws raw uniforms from `rng` (inherently
+ * sequential — `Rng` is a scalar mulberry32 state machine, one draw per
+ * call, which is what makes same-seed runs reproducible in the first
+ * place). The epsilon-clamp and both `log`s of the Gumbel transform run
+ * once as vectorized tensor ops over the whole `[batch, categoricals,
+ * classes]` tensor instead of per-element in that same JS loop (PR #37
+ * review follow-up 3: the per-element `Math.log`/`Math.log` pair cost
+ * 0.140ms/call vs. 0.081ms for the pre-Gumbel-max path at `[64,8,4]` —
+ * see docs/explainers/0005-world-model-rollout-wiring.md).
  */
 export function sampleHard(logits: tf.Tensor3D, rng: Rng): tf.Tensor3D {
   return tf.tidy(() => {
     const [batch, categoricals, classes] = logits.shape;
     const size = batch * categoricals * classes;
-    const gumbelNoise = new Float32Array(size);
+    const uniforms = new Float32Array(size);
     for (let i = 0; i < size; i++) {
-      const u = Math.min(Math.max(rng.next(), GUMBEL_UNIFORM_EPSILON), 1 - GUMBEL_UNIFORM_EPSILON);
-      gumbelNoise[i] = -Math.log(-Math.log(u));
+      uniforms[i] = rng.next();
     }
-    const noise = tf.tensor(gumbelNoise, [batch, categoricals, classes]);
-    const indices = tf.argMax(tf.add(logits, noise), -1);
+    const u = tf.tensor(uniforms, [batch, categoricals, classes]);
+    const clamped = tf.clipByValue(u, GUMBEL_UNIFORM_EPSILON, 1 - GUMBEL_UNIFORM_EPSILON);
+    const gumbelNoise = tf.neg(tf.log(tf.neg(tf.log(clamped))));
+    const indices = tf.argMax(tf.add(logits, gumbelNoise), -1);
     return tf.oneHot(indices, classes).toFloat() as tf.Tensor3D;
   });
 }
 
 /**
  * Samples a categorical latent from `logits` via the straight-through
- * estimator. `fixedHard`, when given, replaces the internal `sampleHard`
- * draw — see `RSSMCell.prior()`'s doc comment for why. `rng` is required
- * whenever `fixedHard` is omitted (throws otherwise) — see `sampleHard`'s
- * doc comment.
+ * estimator. `source.fixedHard`, when given, replaces the internal
+ * `sampleHard` draw — see `RSSMCell.prior()`'s doc comment for why.
+ * `source.rng` is used otherwise. The `"fixedHard" in source` runtime check
+ * is a fallback for callers that bypass the `LatentSampleSource` type
+ * entirely (see its doc comment) — normal TypeScript-checked call sites
+ * can't construct a `source` with neither.
  */
-export function sampleStraightThrough(logits: tf.Tensor3D, fixedHard?: tf.Tensor3D, rng?: Rng): LatentDistribution {
+export function sampleStraightThrough(logits: tf.Tensor3D, source: LatentSampleSource): LatentDistribution {
   const probs = tf.softmax(logits, -1) as tf.Tensor3D;
-  let hard: tf.Tensor3D;
-  if (fixedHard) {
-    hard = fixedHard;
-  } else {
-    if (!rng) {
-      throw new Error("sampleStraightThrough: rng is required when fixedHard is not given (see sampleHard's doc comment)");
-    }
-    hard = sampleHard(logits, rng);
-  }
+  const hard = "fixedHard" in source ? source.fixedHard : sampleHard(logits, source.rng);
   const sample = straightThroughEstimator(logits, hard) as tf.Tensor3D;
   return { probs, sample: sample.reshape([logits.shape[0], -1]) as tf.Tensor2D };
 }

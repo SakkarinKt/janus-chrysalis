@@ -87,12 +87,19 @@ turned out not to be enough.
 ## What's deliberately not here yet
 
 Any observation encoder (the posterior head takes a raw `[batch, obsSize]` observation tensor
-directly — no encoder network), loss functions (KL-balancing between prior and posterior, image/
-observation reconstruction), training code, and any wiring into `src/experiment/freeze.ts`'s
-rollout loop. Tensor lifecycle management (`tf.tidy`/explicit `.dispose()`) is still not addressed —
-same reasoning as the prior sub-increment: no training loop exists yet to make tensor-count growth
-a real cost, and premature disposal risks disposing a tensor a caller still needs. Worth revisiting
-once the cell is wired into an actual multi-episode rollout.
+directly — no encoder network), observation-reconstruction loss (`loop/GOAL.md` priority 3
+sub-increment 2, still unstarted — deliberately done *after* sub-increment 3 below, per PR #38's
+review).
+
+**Update (2026-08-06): sub-increment 3 landed — KL-balancing (sub-increment 1, PR #38) and wiring
+into `src/experiment/freeze.ts`'s rollout, ahead of reconstruction.** `src/model/worldModel.ts`'s
+`WorldModel` is the first production caller of `step()`/`prior()`/`posterior()` — see its own class
+doc comment for the tensor-lifecycle contract those three methods carry (still no `tf.tidy`
+internally; the caller wraps them) and
+docs/explainers/0005-world-model-rollout-wiring.md for the full design. `prior()`/`posterior()`'s
+signature changed in the same increment: `fixedHard`/`rng` are now one required
+`LatentSampleSource` union (`{ rng } | { fixedHard }`), not two optional trailing params — see
+`LatentSampleSource`'s doc comment in `src/model/rssm.ts`.
 
 ## Update (2026-07-22): the deterministic path no longer goes through `tf.layers.rnn`
 

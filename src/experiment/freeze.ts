@@ -3,6 +3,7 @@ import { NUM_AGENTS } from "../env/types.ts";
 import type { Action, Observation } from "../env/types.ts";
 import type { Policy } from "../agent/policy.ts";
 import type { Rng } from "../env/rng.ts";
+import type { WorldModel } from "../model/worldModel.ts";
 
 /**
  * "intervention": only `frozenAgentIndex` stops updating at `freezeStep`;
@@ -42,6 +43,17 @@ export interface EpisodeStepRecord {
   done: boolean;
   /** Per-agent frozen status that gated this step's policy.update() call, indexed like actions. */
   frozen: boolean[];
+  /**
+   * Per-agent world-model loss this step (`WorldModel.step()`'s return),
+   * `undefined` where `worldModels` wasn't given for that agent. Populated
+   * every step regardless of frozen status — a frozen agent's world model
+   * still gets evaluated (just not trained), per proposal 0001's "track the
+   * frozen agent's... prediction error... over the following steps" —
+   * raw per-step loss, not the freeze-vs-control diff itself (that's
+   * `loop/GOAL.md` priority 4's metric plumbing, not computed here). See
+   * docs/explainers/0005-world-model-rollout-wiring.md.
+   */
+  worldModelLoss: (number | undefined)[];
 }
 
 /**
@@ -52,16 +64,27 @@ export interface EpisodeStepRecord {
  * 0001's freeze intervention — it does not itself compute the
  * drift-attributable prediction-error metric, only gates which agent
  * "learns" from which transition, which is what that metric depends on.
+ *
+ * `worldModels`, when given (indexed like `policies`, entries optional per
+ * agent — Arm A: one independent `WorldModel` per agent, no sharing),
+ * advances that agent's world model every step and gates *training* it
+ * (not evaluating it) by the same `frozen[i]` this step already computes
+ * for `policy.update()` — see docs/explainers/0005-world-model-rollout-wiring.md
+ * for why a frozen agent's world model still has to be evaluated, just not
+ * trained. Reset at the start of this episode via `WorldModel.reset()`.
  */
 export function runEpisode(
   env: CooperativeGridWorld,
   policies: Policy[],
   rng: Rng,
   freezeConfig?: FreezeConfig,
+  worldModels?: (WorldModel | undefined)[],
 ): EpisodeStepRecord[] {
   if (policies.length !== NUM_AGENTS) {
     throw new Error(`Expected ${NUM_AGENTS} policies, got ${policies.length}`);
   }
+
+  worldModels?.forEach((worldModel) => worldModel?.reset());
 
   const records: EpisodeStepRecord[] = [];
   let observations = env.reset().observations;
@@ -86,6 +109,10 @@ export function runEpisode(
       }
     });
 
+    const worldModelLoss = observations.map(
+      (_, i) => worldModels?.[i]?.step(actions[i], result.observations[i], rng, !frozen[i]).loss,
+    );
+
     records.push({
       step: result.step,
       observations,
@@ -94,6 +121,7 @@ export function runEpisode(
       reward: result.reward,
       done: result.done,
       frozen,
+      worldModelLoss,
     });
 
     observations = result.observations;

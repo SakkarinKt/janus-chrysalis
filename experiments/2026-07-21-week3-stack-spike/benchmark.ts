@@ -105,7 +105,7 @@ function benchmarkForwardRollout() {
   const advance = () => {
     state = tf.tidy(() => {
       const deterministic = rssm.step(state, actions);
-      const { sample } = rssm.prior(deterministic, undefined, rng);
+      const { sample } = rssm.prior(deterministic, { rng });
       return { deterministic, stochastic: sample };
     });
   };
@@ -131,7 +131,7 @@ function benchmarkSingleStepGradient() {
   function forward(): tf.Scalar {
     const state = rssm.initialState(BATCH);
     const deterministic = rssm.step(state, actions);
-    const { probs } = rssm.prior(deterministic, priorHard);
+    const { probs } = rssm.prior(deterministic, { fixedHard: priorHard });
     const flatProbs = probs.reshape([BATCH, stochasticSize]) as tf.Tensor2D;
     return tf.sum(tf.mul(flatProbs, lossWeights)) as tf.Scalar;
   }
@@ -181,7 +181,7 @@ function benchmarkMultiStepGradient(chainLength: number) {
     let state = rssm.initialState(BATCH);
     for (let t = 0; t < chainLength; t++) {
       const deterministic = rssm.step(state, actions);
-      const { sample } = rssm.prior(deterministic, priorHard);
+      const { sample } = rssm.prior(deterministic, { fixedHard: priorHard });
       state = { deterministic, stochastic: sample };
     }
     return tf.sum(state.deterministic) as tf.Scalar;

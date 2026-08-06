@@ -72,7 +72,7 @@ function assignDeterministicWeights(rssm: RSSMCell): void {
   // Only forces priorDense's lazy build (weights are overwritten below); the
   // sample this draws is discarded, so the rng's seed is arbitrary — but
   // prior() requires one when fixedHard is omitted (quality-pass finding #1).
-  rssm.prior(det0, undefined, new Rng(1));
+  rssm.prior(det0, { rng: new Rng(1) });
   const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ val: tf.Variable }> } }).cell;
   const priorDense = (rssm as unknown as { priorDense: { trainableWeights: Array<{ val: tf.Variable }> } }).priorDense;
   let offset = 0;
@@ -123,7 +123,7 @@ function makeSTEForward(rssm: RSSMCell, chainLength: number): () => tf.Scalar {
     let state = rssm.initialState(1);
     for (let t = 0; t < chainLength; t++) {
       const deterministic = rssm.step(state, [1]);
-      const { sample } = rssm.prior(deterministic, priorHard);
+      const { sample } = rssm.prior(deterministic, { fixedHard: priorHard });
       state = { deterministic, stochastic: sample };
     }
     return tf.sum(state.deterministic) as tf.Scalar;
@@ -141,7 +141,7 @@ function makeDetachedForward(rssm: RSSMCell, chainLength: number): () => tf.Scal
     let state = rssm.initialState(1);
     for (let t = 0; t < chainLength; t++) {
       const deterministic = rssm.step(state, [1]);
-      rssm.prior(deterministic, priorHard);
+      rssm.prior(deterministic, { fixedHard: priorHard });
       state = { deterministic, stochastic: priorHardFlat };
     }
     return tf.sum(state.deterministic) as tf.Scalar;
@@ -156,13 +156,13 @@ const invarianceCheck = (() => {
   const original = Array.from(bias.dataSync());
 
   const det = rssm.step(rssm.initialState(1), [1]);
-  const before = rssm.prior(det, priorHard).sample.arraySync();
+  const before = rssm.prior(det, { fixedHard: priorHard }).sample.arraySync();
 
   const bumped = original.slice();
   bumped[0] += 0.5;
   bias.assign(tf.tensor(bumped, bias.shape));
   const detAfter = rssm.step(rssm.initialState(1), [1]);
-  const after = rssm.prior(detAfter, priorHard).sample.arraySync();
+  const after = rssm.prior(detAfter, { fixedHard: priorHard }).sample.arraySync();
   bias.assign(tf.tensor(original, bias.shape));
 
   return { before, after, identical: JSON.stringify(before) === JSON.stringify(after) };

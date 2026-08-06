@@ -5,6 +5,7 @@ import {
   RSSMCell,
   sampleHard,
   straightThroughEstimator,
+  type LatentSampleSource,
   type RSSMState,
 } from "../../src/model/rssm.ts";
 import { Action } from "../../src/env/types.ts";
@@ -15,7 +16,7 @@ const CONFIG = { deterministicSize: 4, latentCategoricals: 3, latentClasses: 5 }
 /** Advances one full recurrent step using the prior (no observation) — convenience for tests. */
 function advance(rssm: RSSMCell, state: RSSMState, actions: Action[], rng: Rng): RSSMState {
   const deterministic = rssm.step(state, actions);
-  const { sample } = rssm.prior(deterministic, undefined, rng);
+  const { sample } = rssm.prior(deterministic, { rng });
   return { deterministic, stochastic: sample };
 }
 
@@ -101,7 +102,7 @@ test("step: two different action sequences from the same initial state diverge",
 test("prior: probs and sample are shaped [batch, C, K] / [batch, C*K], probs sum to 1 per categorical", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(2);
-  const { probs, sample } = rssm.prior(state.deterministic, undefined, new Rng(1));
+  const { probs, sample } = rssm.prior(state.deterministic, { rng: new Rng(1) });
 
   assert.deepEqual(probs.shape, [2, CONFIG.latentCategoricals, CONFIG.latentClasses]);
   assert.deepEqual(sample.shape, [2, CONFIG.latentCategoricals * CONFIG.latentClasses]);
@@ -115,7 +116,7 @@ test("prior: probs and sample are shaped [batch, C, K] / [batch, C*K], probs sum
 test("prior: the sample is a hard one-hot per categorical (exactly one 1, rest 0)", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(4);
-  const { sample } = rssm.prior(state.deterministic, undefined, new Rng(1));
+  const { sample } = rssm.prior(state.deterministic, { rng: new Rng(1) });
   const reshaped = sample.reshape([4, CONFIG.latentCategoricals, CONFIG.latentClasses]).arraySync() as number[][][];
 
   for (const batchRow of reshaped) {
@@ -132,18 +133,18 @@ test("prior: an Rng-seeded Gumbel-max draw reproduces the sample under the same 
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(1);
 
-  const a = rssm.prior(state.deterministic, undefined, new Rng(42)).sample.arraySync();
-  const b = rssm.prior(state.deterministic, undefined, new Rng(42)).sample.arraySync();
+  const a = rssm.prior(state.deterministic, { rng: new Rng(42) }).sample.arraySync();
+  const b = rssm.prior(state.deterministic, { rng: new Rng(42) }).sample.arraySync();
   assert.deepEqual(a, b, "same seed on a fresh Rng should reproduce the same sample");
 
-  const c = rssm.prior(state.deterministic, undefined, new Rng(43)).sample.arraySync();
+  const c = rssm.prior(state.deterministic, { rng: new Rng(43) }).sample.arraySync();
   assert.notDeepEqual(a, c, "a different seed should (with overwhelming probability) draw a different sample");
 });
 
-test("prior: omitting rng without fixedHard throws rather than silently drawing an unseeded sample", () => {
+test("prior: a source with neither rng nor fixedHard throws rather than silently drawing an unseeded sample (normally a compile error — LatentSampleSource requires one; this exercises the runtime fallback for callers that bypass the type system, e.g. plain-JS callers, since Node runs these .ts files with type-stripping only)", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(1);
-  assert.throws(() => rssm.prior(state.deterministic));
+  assert.throws(() => rssm.prior(state.deterministic, {} as unknown as LatentSampleSource));
 });
 
 test("posterior: conditions on the observation — different observations give different logits", () => {
@@ -152,8 +153,8 @@ test("posterior: conditions on the observation — different observations give d
   const obsA = tf.tensor2d([[1, 0, 0, 0]]);
   const obsB = tf.tensor2d([[0, 0, 0, 1]]);
 
-  const a = rssm.posterior(state.deterministic, obsA, undefined, new Rng(1)).probs.arraySync();
-  const b = rssm.posterior(state.deterministic, obsB, undefined, new Rng(1)).probs.arraySync();
+  const a = rssm.posterior(state.deterministic, obsA, { rng: new Rng(1) }).probs.arraySync();
+  const b = rssm.posterior(state.deterministic, obsB, { rng: new Rng(1) }).probs.arraySync();
   assert.notDeepEqual(a, b);
 });
 
@@ -161,7 +162,7 @@ test("posterior: output shapes match the prior's", () => {
   const rssm = new RSSMCell(CONFIG);
   const state = rssm.initialState(3);
   const obs = tf.zeros([3, 7]) as tf.Tensor2D;
-  const { probs, sample } = rssm.posterior(state.deterministic, obs, undefined, new Rng(1));
+  const { probs, sample } = rssm.posterior(state.deterministic, obs, { rng: new Rng(1) });
 
   assert.deepEqual(probs.shape, [3, CONFIG.latentCategoricals, CONFIG.latentClasses]);
   assert.deepEqual(sample.shape, [3, CONFIG.latentCategoricals * CONFIG.latentClasses]);
@@ -347,7 +348,7 @@ test(
     function forward(): tf.Scalar {
       const state = rssm.initialState(1);
       const deterministic = rssm.step(state, [Action.Up]);
-      const { probs } = rssm.prior(deterministic, priorHard);
+      const { probs } = rssm.prior(deterministic, { fixedHard: priorHard });
       const flatProbs = probs.reshape([1, stochasticSize]) as tf.Tensor2D;
       return tf.sum(tf.mul(flatProbs, lossWeights)) as tf.Scalar;
     }
@@ -398,7 +399,7 @@ test(
     // weights), but it keeps this test's failure mode reproducible if it
     // ever does fail.
     const det0 = rssm.step(rssm.initialState(1), [Action.Up]);
-    rssm.prior(det0, undefined, new Rng(1));
+    rssm.prior(det0, { rng: new Rng(1) });
     const cell = (rssm as unknown as { cell: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }).cell;
     const priorDense = (
       rssm as unknown as { priorDense: { trainableWeights: Array<{ name: string; val: tf.Variable }> } }
@@ -421,7 +422,7 @@ test(
       let state = rssm.initialState(1);
       for (const action of [Action.Up, Action.Right, Action.Down] as Action[]) {
         const deterministic = rssm.step(state, [action]);
-        rssm.prior(deterministic, priorHard);
+        rssm.prior(deterministic, { fixedHard: priorHard });
         state = { deterministic, stochastic: priorHardFlat };
       }
       return tf.sum(state.deterministic) as tf.Scalar;
