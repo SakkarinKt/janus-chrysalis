@@ -71,11 +71,25 @@ being validated here is the wiring, not a learning effect.
   that cell is actually designed, per the reviewer's own "before the cell lands" framing, and
   recorded here so it isn't lost.
 
+  **Applied 2026-08-06** (`loop/GOAL.md` priority 3 sub-increment 3,
+  `docs/explainers/0005-world-model-rollout-wiring.md`): `runEpisode` now takes an optional
+  `worldModels` param and computes `frozen[i]` once per agent per step, passing it to both
+  `policy.update()`'s existing gate and `WorldModel.step()`'s new `train` argument — the "single
+  gated update path" the reviewer asked for, expressed as "compute once, use twice" rather than a
+  separate shared-gate abstraction. One refinement the design settled that this note didn't
+  anticipate: "frozen" for the world model means *stop training*, not *stop evaluating* —
+  `WorldModel.step()` still advances its recurrent state and returns a loss every step regardless
+  of `frozen[i]`, since proposal `0001`'s whole measurement depends on the frozen agent's world
+  model staying evaluable against new transitions after the freeze point. See explainer 0005 for
+  why.
+
 ## What's deliberately not here yet
 
-No world-model backbone, no actual learning (`RandomPolicy.update` doesn't exist), no
-`experiments/0001/...` scaffold, no `tfjs` dependency, no metric computation. Sharing topologies
-(Arms B-D) remain entirely out of scope.
+No actual policy learning still (`RandomPolicy.update` doesn't exist — only the world model
+trains, since 2026-08-06's `worldModels` wiring, see above and explainer 0005). No
+`experiments/0001/...` scaffold, no drift-attributable-error metric computation (per-step
+`worldModelLoss` is raw loss, not the freeze-vs-control diff proposal `0001` defines — that's
+priority 4). Sharing topologies (Arms B-D) remain entirely out of scope.
 
 ## Test coverage
 
@@ -85,6 +99,8 @@ that counts and timestamps its own `update()` calls, confirmed against both cond
 no freeze config at all; an end-to-end run with `RandomPolicy` confirming the rollout still
 reaches the environment's configured horizon; a chaining test (added in the PR #12 follow-up
 above) confirming each record's `observations` equals the prior record's `nextObservations` (and
-the first record's `observations` is the reset observation). `test/agent/policy.test.ts` —
-`RandomPolicy` always returns a valid `Action`, is driven by the passed-in `Rng` (not hidden
-state), and exposes no `update` hook. 27/27 tests passing overall (`node --test`).
+the first record's `observations` is the reset observation); (2026-08-06) `worldModelLoss`
+defaulting to all-`undefined` without `worldModels`, and an end-to-end case with two `WorldModel`s
+under an intervention config — see docs/explainers/0005-world-model-rollout-wiring.md's "Test
+coverage" for that one's detail. `test/agent/policy.test.ts` — `RandomPolicy` always returns a
+valid `Action`, is driven by the passed-in `Rng` (not hidden state), and exposes no `update` hook.

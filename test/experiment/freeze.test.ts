@@ -7,6 +7,7 @@ import { RandomPolicy } from "../../src/agent/policy.ts";
 import type { Policy, Transition } from "../../src/agent/policy.ts";
 import { Action } from "../../src/env/types.ts";
 import { Rng } from "../../src/env/rng.ts";
+import { WorldModel } from "../../src/model/worldModel.ts";
 
 /** Test double: acts deterministically (always Stay) and counts update() calls. */
 class CountingPolicy implements Policy {
@@ -129,3 +130,83 @@ test("runEpisode: wrong number of policies throws", () => {
   const env = new CooperativeGridWorld({ seed: 5, horizon: 3 });
   assert.throws(() => runEpisode(env, [new RandomPolicy()], new Rng(5)));
 });
+
+test("runEpisode: without worldModels, every record's worldModelLoss is an array of undefined (one entry per agent)", () => {
+  const env = new CooperativeGridWorld({ seed: 7, horizon: 5 });
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], new Rng(7));
+  for (const record of records) {
+    assert.deepEqual(record.worldModelLoss, [undefined, undefined]);
+  }
+});
+
+/** Small dims so the test runs fast — shape/config correctness isn't what's under test here. */
+const WORLD_MODEL_CONFIG = { deterministicSize: 4, latentCategoricals: 2, latentClasses: 3 };
+
+test(
+  "runEpisode: wires per-agent WorldModels into the rollout — a frozen-from-the-start agent's " +
+    "world-model weights never move (freezeStep: 1 means every step is frozen for it), while its " +
+    "partner's do; both agents' worldModelLoss stays defined (the frozen agent is still evaluated, " +
+    "just not trained) and the frozen agent's recurrent state still advances, per proposal 0001's " +
+    "'track the frozen agent's... prediction error... over the following steps' " +
+    "(docs/explainers/0005-world-model-rollout-wiring.md)",
+  () => {
+    const env = new CooperativeGridWorld({ seed: 8, horizon: 8 });
+    const frozenWorldModel = new WorldModel({
+      rssm: WORLD_MODEL_CONFIG,
+      observationSize: env.observationLength,
+      lossConfig: { freeBits: 0 },
+    });
+    const trainingWorldModel = new WorldModel({
+      rssm: WORLD_MODEL_CONFIG,
+      observationSize: env.observationLength,
+      lossConfig: { freeBits: 0 },
+    });
+    const frozenWeightsBefore = frozenWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+    const trainingWeightsBefore = trainingWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+
+    const freezeConfig: FreezeConfig = { freezeStep: 1, condition: "intervention", frozenAgentIndex: 0 };
+    const records = runEpisode(
+      env,
+      [new RandomPolicy(), new RandomPolicy()],
+      new Rng(8),
+      freezeConfig,
+      [frozenWorldModel, trainingWorldModel],
+    );
+
+    assert.equal(records.length, 8);
+    for (const record of records) {
+      assert.equal(typeof record.worldModelLoss[0], "number", `expected a defined loss for the frozen agent at step ${record.step}`);
+      assert.ok(Number.isFinite(record.worldModelLoss[0]));
+      assert.equal(
+        typeof record.worldModelLoss[1],
+        "number",
+        `expected a defined loss for the training agent at step ${record.step}`,
+      );
+      assert.ok(Number.isFinite(record.worldModelLoss[1]));
+    }
+
+    const frozenWeightsAfter = frozenWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+    assert.deepEqual(
+      frozenWeightsBefore,
+      frozenWeightsAfter,
+      "the frozen agent's world-model weights must be bit-identical after an episode frozen from step 1",
+    );
+
+    const trainingWeightsAfter = trainingWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+    assert.notDeepEqual(
+      trainingWeightsBefore,
+      trainingWeightsAfter,
+      "the never-frozen partner's world-model weights should have moved from their initial values",
+    );
+
+    const zeroState = Array.from({ length: 1 }, () => Array(WORLD_MODEL_CONFIG.deterministicSize).fill(0));
+    assert.notDeepEqual(
+      frozenWorldModel.currentState.deterministic.arraySync(),
+      zeroState,
+      "the frozen agent's recurrent state should still have advanced away from zero, since it's still evaluated every step",
+    );
+
+    frozenWorldModel.dispose();
+    trainingWorldModel.dispose();
+  },
+);
