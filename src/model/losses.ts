@@ -58,6 +58,27 @@ export function categoricalKL(p: tf.Tensor3D, q: tf.Tensor3D): tf.Tensor1D {
   });
 }
 
+/**
+ * Observation reconstruction loss `L_pred` — sum of squared error between
+ * `predicted`/`target` (each `[batch, observationSize]`) per row, then
+ * batch-meaned, mirroring `categoricalKL`'s "reduce over the per-example
+ * axes, then batch-mean" shape. Equal (up to an additive constant and a
+ * `0.5` factor that doesn't change what minimizes it) to the negative
+ * log-likelihood of `target` under a unit-variance isotropic Gaussian
+ * centered at `predicted` — the standard simplification of DreamerV3's
+ * `L_pred = -log p(o_t | h_t, z_t)`, without that paper's `symlog` transform
+ * (this environment's `Observation` is already normalized to a fixed small
+ * range, so there's no multi-order-of-magnitude spread for `symlog` to
+ * compress — see docs/explainers/0006-observation-reconstruction-loss.md
+ * for the full reasoning and confidence tag).
+ */
+export function reconstructionLoss(predicted: tf.Tensor2D, target: tf.Tensor2D): tf.Scalar {
+  return tf.tidy(() => {
+    const squaredError = tf.sum(tf.square(tf.sub(predicted, target)), 1);
+    return tf.mean(squaredError) as tf.Scalar;
+  });
+}
+
 export interface KLBalancedLossConfig {
   /** Nats floor each of dynLoss/repLoss is clipped to, per batch row, before the batch mean. Default 1. */
   freeBits?: number;

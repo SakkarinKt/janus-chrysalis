@@ -59,6 +59,66 @@ test("WorldModel: train=true changes at least one trainable weight; train=false 
   wm.dispose();
 });
 
+test("WorldModel: reconstructionLoss + klLoss equals loss, every step", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+
+  for (const train of [true, false, true]) {
+    const result = wm.step(Action.Up, OBSERVATION, rng, train);
+    assert.ok(
+      Math.abs(result.reconstructionLoss + result.klLoss - result.loss) < 1e-4,
+      `expected reconstructionLoss + klLoss ~= loss, got ${result.reconstructionLoss} + ${result.klLoss} != ${result.loss}`,
+    );
+  }
+
+  wm.dispose();
+});
+
+test("WorldModel: train=true changes at least one decoder weight; train=false leaves every decoder weight bit-identical", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, lossConfig: { freeBits: 0 } });
+  const rng = new Rng(1);
+  const decoderWeightsOf = () => wm.decoder.trainableWeights().map((w) => Array.from(w.dataSync()));
+
+  const beforeFrozen = decoderWeightsOf();
+  wm.step(Action.Up, OBSERVATION, rng, false);
+  const afterFrozen = decoderWeightsOf();
+  assert.deepEqual(beforeFrozen, afterFrozen, "train=false must not move any decoder weight");
+
+  const beforeTrain = decoderWeightsOf();
+  wm.step(Action.Up, OBSERVATION, rng, true);
+  const afterTrain = decoderWeightsOf();
+  assert.notDeepEqual(beforeTrain, afterTrain, "train=true must move at least one decoder weight");
+
+  wm.dispose();
+});
+
+test("WorldModel: repeated identical-input training steps drive reconstructionLoss down specifically (freeBits: 0 isolates it from the KL floor, same convention as the combined-loss test below)", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, lossConfig: { freeBits: 0 } });
+  const rng = new Rng(11);
+
+  // 150 steps / first-20-vs-last-20 rather than the 40-step / first-5-vs-last-5 window the
+  // KL-only version of this coarse check used (before this sub-increment added a second,
+  // independently-initialized loss term sharing the same optimizer step): empirically, at
+  // 40 steps with a 5-sample window, some seeds' last-5 average lands above their first-5
+  // average purely from the per-step Gumbel-sample variance a short window doesn't average
+  // out, even while the underlying trend is a clear decrease (checked directly against
+  // several seeds, not asserted from theory alone). Wider windows over a longer run made the
+  // decrease reliable across every seed tried.
+  const reconLosses: number[] = [];
+  for (let i = 0; i < 150; i++) {
+    reconLosses.push(wm.step(Action.Up, OBSERVATION, rng, true).reconstructionLoss);
+  }
+
+  const firstTwenty = reconLosses.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
+  const lastTwenty = reconLosses.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  assert.ok(
+    lastTwenty < firstTwenty,
+    `expected mean reconstructionLoss to drop across training (first 20 avg ${firstTwenty}, last 20 avg ${lastTwenty})`,
+  );
+
+  wm.dispose();
+});
+
 test("WorldModel: reset() returns to a fresh zero-filled state and disposes the previous one", () => {
   const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
   const rng = new Rng(1);
@@ -73,20 +133,24 @@ test("WorldModel: reset() returns to a fresh zero-filled state and disposes the 
   wm.dispose();
 });
 
-test("WorldModel: repeated identical-input training steps drive the KL-balanced loss down (freeBits: 0, isolating signal from the floor per test/model/losses.test.ts's convention — coarse 'does it learn' check, not a convergence guarantee)", () => {
+test("WorldModel: repeated identical-input training steps drive the combined (reconstruction + KL-balanced) loss down (freeBits: 0, isolating signal from the KL floor per test/model/losses.test.ts's convention — coarse 'does it learn' check, not a convergence guarantee)", () => {
   const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, lossConfig: { freeBits: 0 } });
   const rng = new Rng(7);
 
+  // 150 steps / first-20-vs-last-20: see the reconstructionLoss-specific version of this test
+  // above for why this sub-increment widened the window from the original 40-step / first-5-
+  // vs-last-5 check (this test predates the reconstruction term; adding it changed the
+  // per-step variance enough that the narrower window stopped being reliable).
   const losses: number[] = [];
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 150; i++) {
     losses.push(wm.step(Action.Up, OBSERVATION, rng, true).loss);
   }
 
-  const firstFive = losses.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
-  const lastFive = losses.slice(-5).reduce((a, b) => a + b, 0) / 5;
+  const firstTwenty = losses.slice(0, 20).reduce((a, b) => a + b, 0) / 20;
+  const lastTwenty = losses.slice(-20).reduce((a, b) => a + b, 0) / 20;
   assert.ok(
-    lastFive < firstFive,
-    `expected mean loss to drop across training (first 5 avg ${firstFive}, last 5 avg ${lastFive}); losses: ${losses}`,
+    lastTwenty < firstTwenty,
+    `expected mean loss to drop across training (first 20 avg ${firstTwenty}, last 20 avg ${lastTwenty})`,
   );
 
   wm.dispose();

@@ -146,6 +146,41 @@ function and the same outer-`tf.tidy` structure, just without the surrounding `v
 before/after a multi-step run, mixing `train: true`/`false`, net zero beyond the two persisted
 state tensors).
 
+## Amendment 2026-08-07: the BPTT horizon is 1, explicitly
+
+PR #39's review (@SakkarinKt, 2026-08-06) named an implicit design point in the tensor-lifecycle
+section above and asked for it to be stated explicitly here, before priority 4's metrics are built
+on top of it: the `tf.keep()`-ed `nextDeterministic`/`nextStochastic` tensors this sub-increment
+persists as the next `RSSMState` become plain leaves on the *following* `step()` call's own fresh
+`tf.tidy`/`tf.variableGrads` tape — they carry no gradient history from the step that produced them.
+So a given step's loss can only backpropagate through that one step's own `h_{t-1} -> h_t`
+transition; gradients never reach further back into the recurrence. This is a backpropagation-
+through-time horizon of **1**, not the multi-step chains `RSSMCell.step()` itself is fully capable of
+differentiating through (the week-3 stack-validation spike's entire point — ADR-0002 decision 5,
+`notes/adr-0002-js-ml-stack.md` §9–11 — validated chained gradients across 2–4 steps of
+`RSSMCell.step()` called directly in a single differentiation trace; nothing here uses that
+capability, because each `WorldModel.step()` call opens and closes its own `tf.variableGrads` trace).
+
+Whether this holds through priority 4 (Arm-A metric plumbing + the 3-seed instrument-validation
+runs): **yes, and it doesn't need to change to get there.** Priority 4's milestone is the
+freeze-vs-both-frozen drift-attributable prediction-error measurement, which needs `WorldModel.step()`
+to produce a usable per-step loss/error signal under one-transition-at-a-time online training —
+exactly what horizon-1 already provides. Nothing in proposal `0001`'s Arm-A milestone requires
+multi-step BPTT to be functioning for that measurement to be valid; the measurement is about
+prediction error, not about validating a particular training procedure's convergence quality.
+
+Where it will eventually matter (neither is scheduled work, recorded so a future increment doesn't
+rediscover this): the human's reserved replay-buffer module (G2) samples individual transitions, so
+by itself it doesn't create pressure to lift this truncation — there's no multi-step sequence in a
+single sampled transition to chain gradients across regardless. A future increment that instead
+trains on sampled *sub-sequences* of consecutive transitions (DreamerV3's actual training regime)
+would need to explicitly restructure `WorldModel.step()`'s single-transition-per-call shape into a
+sequence-batched one first — horizon-1 would otherwise silently cap how much of that sequence's
+gradient signal reaches the recurrent weights, while looking like ordinary sequence training from the
+call site. See docs/explainers/0006-observation-reconstruction-loss.md (2026-08-07) for the
+sub-increment this amendment shipped alongside — that sub-increment adds a new loss term to the same
+single-step `forward()` closure and does not change this horizon.
+
 ## Test coverage
 
 `test/model/worldModel.test.ts`: constructing a `WorldModel` builds all layers without throwing

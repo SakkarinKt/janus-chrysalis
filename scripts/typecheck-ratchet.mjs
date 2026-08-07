@@ -19,7 +19,6 @@ import { spawnSync } from "node:child_process";
 
 const BASELINE_IN_REPO_ERRORS = 44;
 
-
 const result = spawnSync("npx", ["tsc", "--noEmit"], { encoding: "utf8" });
 const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 process.stdout.write(output);
