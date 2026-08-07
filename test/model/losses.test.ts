@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import tf from "@tensorflow/tfjs-node";
-import { categoricalKL, stopGradient, klBalancedLoss } from "../../src/model/losses.ts";
+import { categoricalKL, stopGradient, klBalancedLoss, reconstructionLoss } from "../../src/model/losses.ts";
 import type { LatentDistribution } from "../../src/model/rssm.ts";
 
 test("categoricalKL: zero for two identical distributions", () => {
@@ -32,6 +32,31 @@ test("categoricalKL: sums over both classes and categoricals into one scalar per
   const singleKL = tf.mean(categoricalKL(pSingle, qSingle)).arraySync() as number;
 
   assert.ok(Math.abs(rowKL - 2 * singleKL) < 1e-4, `expected sum over categoricals: ${rowKL} vs 2*${singleKL}`);
+});
+
+test("reconstructionLoss: exactly zero for identical predicted/target tensors", () => {
+  const x = tf.tensor2d([[0.1, -0.2, 0.3], [0.5, 0.5, 0.5]]);
+  assert.equal(reconstructionLoss(x, x).arraySync(), 0);
+});
+
+test("reconstructionLoss: sums squared error over features, then means over the batch", () => {
+  // Row 0: predicted - target = [1, 0, 0] -> sum of squares 1. Row 1: [0, 2, 0] -> sum of squares 4.
+  // Mean over the 2-row batch: (1 + 4) / 2 = 2.5.
+  const predicted = tf.tensor2d([[1, 0, 0], [0, 2, 0]]);
+  const target = tf.tensor2d([[0, 0, 0], [0, 0, 0]]);
+  assert.equal(reconstructionLoss(predicted, target).arraySync(), 2.5);
+});
+
+test("reconstructionLoss: batch-means across rows (two identical rows give the same loss as one)", () => {
+  const predictedPair = tf.tensor2d([[1, 2], [1, 2]]);
+  const targetPair = tf.tensor2d([[0, 0], [0, 0]]);
+  const pairLoss = reconstructionLoss(predictedPair, targetPair).arraySync() as number;
+
+  const predictedSingle = tf.tensor2d([[1, 2]]);
+  const targetSingle = tf.tensor2d([[0, 0]]);
+  const singleLoss = reconstructionLoss(predictedSingle, targetSingle).arraySync() as number;
+
+  assert.ok(Math.abs(pairLoss - singleLoss) < 1e-5, `expected equal per-row loss to survive batching: ${pairLoss} vs ${singleLoss}`);
 });
 
 test("stopGradient: forward value equals the input exactly", () => {
