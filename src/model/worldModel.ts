@@ -101,15 +101,24 @@ export class WorldModel {
    * posterior).total (docs/explainers/0006). When `train` is true, applies
    * one Adam step toward `loss` before advancing; when false, still advances
    * state and returns `loss` (for post-freeze prediction-error tracking, per
-   * proposal 0001) but leaves weights untouched. Always disposes the
-   * previous state and the observation tensor, even if `forward()` throws.
+   * proposal 0001) but leaves weights untouched. On success, disposes the
+   * previous state and the observation tensor. On a throw from `forward()`
+   * (e.g. a shape mismatch), `this.state` is left exactly as it was —
+   * `prevState` is untouched, remains `this.state`, and stays usable — and
+   * only what `forward()` itself allocated is cleaned up: the observation
+   * tensor plus, if the throw happened after the `tf.keep()` calls below
+   * (e.g. inside `decoder.decode()`/`reconstructionLoss()`), the two
+   * already-escaped next-state tensors (PR #40 review: an earlier version
+   * disposed `prevState`'s tensors unconditionally in a `finally`, which on
+   * a throw left `this.state` — still pointing at `prevState`, since it's
+   * only reassigned below on success — referencing disposed tensors).
    */
   step(action: Action, observation: Observation, rng: Rng, train: boolean): WorldModelStepResult {
     const prevState = this.state;
     const observationTensor = tf.tensor2d([observation]);
 
-    let nextDeterministic!: tf.Tensor2D;
-    let nextStochastic!: tf.Tensor2D;
+    let nextDeterministic: tf.Tensor2D | undefined;
+    let nextStochastic: tf.Tensor2D | undefined;
     let reconstructionLossValue!: number;
     let klLossValue!: number;
 
@@ -152,8 +161,9 @@ export class WorldModel {
     // intermediates — gets disposed once this tidy returns (or, for the
     // train=true path, once variableGrads' own internal tidy calls return,
     // which happens first).
+    let lossValue: number;
     try {
-      const lossValue = tf.tidy(() => {
+      lossValue = tf.tidy(() => {
         let lossTensor: tf.Scalar;
         if (train) {
           const { value, grads } = tf.variableGrads(forward, this.trainableVars);
@@ -164,18 +174,25 @@ export class WorldModel {
         }
         return lossTensor.arraySync() as number;
       });
-
-      this.state = { deterministic: nextDeterministic, stochastic: nextStochastic };
-      return { loss: lossValue, reconstructionLoss: reconstructionLossValue, klLoss: klLossValue };
-    } finally {
-      // PR #39 review: previously these three disposals sat after the
-      // tf.tidy() call unconditionally, so a throw from forward() (e.g. a
-      // shape mismatch) would skip them and leak prevState's two tensors
-      // plus observationTensor. finally runs on both the return above and
-      // any throw out of the try block.
+    } catch (err) {
+      // forward() threw before returning. this.state still equals prevState
+      // (never reassigned below) and prevState's tensors were never
+      // disposed, so the model stays usable. Only clean up what forward()
+      // itself created for this failed attempt: the observation tensor, and
+      // — if the throw happened after the tf.keep() calls above, e.g. from
+      // decoder.decode() or reconstructionLoss() — the two next-state
+      // tensors that already escaped the inner tf.tidy and would otherwise
+      // leak (nothing else will ever reference or dispose them).
       observationTensor.dispose();
-      prevState.deterministic.dispose();
-      prevState.stochastic.dispose();
+      nextDeterministic?.dispose();
+      nextStochastic?.dispose();
+      throw err;
     }
+
+    observationTensor.dispose();
+    prevState.deterministic.dispose();
+    prevState.stochastic.dispose();
+    this.state = { deterministic: nextDeterministic!, stochastic: nextStochastic! };
+    return { loss: lossValue, reconstructionLoss: reconstructionLossValue, klLoss: klLossValue };
   }
 }
