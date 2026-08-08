@@ -176,3 +176,39 @@ test("WorldModel: a warm (post-first-step) run of mixed train/eval steps leaves 
 
   wm.dispose();
 });
+
+test("WorldModel: a throw from forward() (wrong-length observation, shape mismatch inside cell.posterior) leaves this.state exactly as it was — still usable, not disposed (PR #40 review follow-up 1)", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+  wm.step(Action.Up, OBSERVATION, rng, true);
+
+  const before = wm.currentState.deterministic.arraySync();
+  const wrongLengthObservation = OBSERVATION.slice(0, 3);
+  assert.throws(() => wm.step(Action.Up, wrongLengthObservation, rng, true));
+
+  // Previously: the finally block disposed prevState's tensors
+  // unconditionally, and since this.state is only reassigned on success,
+  // this.state still pointed at prevState — so it read back as disposed.
+  const after = wm.currentState.deterministic.arraySync();
+  assert.deepEqual(after, before, "state must be unchanged after a caught throw");
+
+  // A further step must still work normally — the model wasn't poisoned.
+  wm.step(Action.Down, OBSERVATION, rng, true);
+
+  wm.dispose();
+});
+
+test("WorldModel: a throw from forward() with train=false leaks no tensors (tensor-leak check across a caught throw, PR #40 review follow-up 2 — the train=true path also leaks nothing of ours, but tf.variableGrads' own internal tidy drops ~66 intermediates on its own error path regardless of branch, a pre-existing library-level cost outside step()'s control)", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+  wm.step(Action.Up, OBSERVATION, rng, false);
+
+  const before = tf.memory().numTensors;
+  const wrongLengthObservation = OBSERVATION.slice(0, 3);
+  assert.throws(() => wm.step(Action.Up, wrongLengthObservation, rng, false));
+  const after = tf.memory().numTensors;
+
+  assert.equal(after - before, 0, `expected 0 net tensor growth across a caught throw, got ${after - before}`);
+
+  wm.dispose();
+});

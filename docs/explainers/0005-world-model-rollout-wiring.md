@@ -181,6 +181,35 @@ call site. See docs/explainers/0006-observation-reconstruction-loss.md (2026-08-
 sub-increment this amendment shipped alongside — that sub-increment adds a new loss term to the same
 single-step `forward()` closure and does not change this horizon.
 
+## Amendment 2026-08-08: `step()`'s throw path leaves `this.state` untouched
+
+PR #40's review (@SakkarinKt, 2026-08-07) found that the tensor-lifecycle section above's `finally`
+block — added by PR #39's review to stop `prevState`'s tensors leaking on a throw from `forward()`
+(e.g. a shape mismatch) — traded that leak for a worse bug: it disposed `prevState.deterministic`/
+`.stochastic` unconditionally, but `this.state` is only ever reassigned to the *next* state on
+success (after `forward()` returns without throwing), so on a throw `this.state` was still the same
+object as `prevState` — now pointing at disposed tensors. A caught throw left the model unusable
+(`wm.currentState.deterministic.arraySync()` itself threw "Tensor is disposed"), which is worse than
+the leak it replaced. The review also flagged a second, unmeasured case: a throw happening *after*
+the `tf.keep()` calls (e.g. from `decoder.decode()` or `reconstructionLoss()`, both added by
+sub-increment 2) would keep `nextDeterministic`/`nextStochastic` alive but unreachable, since nothing
+would ever dispose or reference them.
+
+Fixed by restructuring `step()` around a `try`/`catch` rather than `try`/`finally`: `prevState`'s
+tensors and `observationTensor` are now only disposed, and `this.state` only reassigned, on the
+success path *after* `tf.tidy()` returns without throwing. On a throw, the `catch` block disposes
+only what `forward()` actually allocated for that failed attempt — `observationTensor`, plus
+`nextDeterministic`/`nextStochastic` if they'd already escaped the inner `tf.tidy` via `tf.keep()`
+— and re-throws; `this.state` is never touched, so it stays exactly `prevState`, still valid. Verified
+directly: a wrong-length observation (shape mismatch inside `cell.posterior`, the review's own repro)
+now leaves `wm.currentState` readable and unchanged after the catch, and a further `step()` call
+still works normally. The `train=false` throw path is confirmed tensor-leak-free
+(`tf.memory().numTensors` net zero across a caught throw); the `train=true` path leaks nothing of
+`step()`'s own beyond a pre-existing, unrelated cost the review already identified and measured as
+roughly equal on both the old and new code — `tf.variableGrads`' own internal `tf.tidy` drops ~66
+intermediates on its own error path when `forward()` throws mid-differentiation, a library-level
+behavior this fix doesn't touch and doesn't attempt to change.
+
 ## Test coverage
 
 `test/model/worldModel.test.ts`: constructing a `WorldModel` builds all layers without throwing
@@ -189,7 +218,10 @@ single-step `forward()` closure and does not change this horizon.
 every step regardless of `train`; repeated identical-input training steps drive the loss down (a
 coarse "does it actually learn something" sanity check, not a convergence guarantee); `reset()`
 returns state to the same zero-filled tensors `initialState` produces; a tensor-leak check across a
-mixed train/eval multi-step run. `test/experiment/freeze.test.ts` gains an end-to-end case: two
+mixed train/eval multi-step run; a throw from `forward()` (wrong-length observation) leaves
+`this.state` exactly as it was and the model still usable afterward; the same throw with
+`train=false` leaks no tensors (Amendment 2026-08-08). `test/experiment/freeze.test.ts` gains an
+end-to-end case: two
 `WorldModel`s wired into `runEpisode` under an intervention `FreezeConfig` — the frozen agent's
 world-model weights are bit-identical before vs. after the freeze point while the training agent's
 have changed, and *both* agents' `worldModelLoss` entries stay defined (non-`undefined`, finite)
