@@ -6,7 +6,6 @@ import { CooperativeGridWorld } from "../../src/env/gridworld.ts";
 import { RandomPolicy } from "../../src/agent/policy.ts";
 import type { Policy, Transition } from "../../src/agent/policy.ts";
 import { Action } from "../../src/env/types.ts";
-import { Rng } from "../../src/env/rng.ts";
 import { WorldModel } from "../../src/model/worldModel.ts";
 
 /** Test double: acts deterministically (always Stay) and counts update() calls. */
@@ -62,7 +61,7 @@ test("runEpisode: without a freezeConfig, no agent is ever frozen and both polic
   const env = new CooperativeGridWorld({ seed: 1, horizon: 6 });
   const a = new CountingPolicy();
   const b = new CountingPolicy();
-  const records = runEpisode(env, [a, b], new Rng(1));
+  const records = runEpisode(env, [a, b], 1);
 
   assert.equal(records.length, 6);
   for (const record of records) {
@@ -78,7 +77,7 @@ test("runEpisode: intervention condition stops the frozen agent's updates from f
   const trainingAgent = new CountingPolicy();
   const freezeConfig: FreezeConfig = { freezeStep: 4, condition: "intervention", frozenAgentIndex: 0 };
 
-  const records = runEpisode(env, [frozenAgent, trainingAgent], new Rng(2), freezeConfig);
+  const records = runEpisode(env, [frozenAgent, trainingAgent], 2, freezeConfig);
 
   assert.equal(records.length, 8);
   for (const record of records) {
@@ -96,7 +95,7 @@ test("runEpisode: control condition stops both agents' updates from freezeStep o
   const b = new CountingPolicy();
   const freezeConfig: FreezeConfig = { freezeStep: 4, condition: "control" };
 
-  runEpisode(env, [a, b], new Rng(3), freezeConfig);
+  runEpisode(env, [a, b], 3, freezeConfig);
 
   assert.equal(a.updateCalls, 3);
   assert.equal(b.updateCalls, 3);
@@ -106,7 +105,7 @@ test("runEpisode: control condition stops both agents' updates from freezeStep o
 
 test("runEpisode: works end-to-end with RandomPolicy (no update hook) and reaches the configured horizon", () => {
   const env = new CooperativeGridWorld({ seed: 4, horizon: 10 });
-  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], new Rng(4), {
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], 4, {
     freezeStep: 5,
     condition: "intervention",
     frozenAgentIndex: 1,
@@ -118,7 +117,7 @@ test("runEpisode: works end-to-end with RandomPolicy (no update hook) and reache
 test("runEpisode: each record's observations is the pre-step obs acted on, nextObservations the post-step obs, chained step to step", () => {
   const env = new CooperativeGridWorld({ seed: 6, horizon: 5 });
   const resetObservations = new CooperativeGridWorld({ seed: 6, horizon: 5 }).reset().observations;
-  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], new Rng(6));
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], 6);
 
   assert.deepEqual(records[0].observations, resetObservations);
   for (let i = 1; i < records.length; i++) {
@@ -128,12 +127,12 @@ test("runEpisode: each record's observations is the pre-step obs acted on, nextO
 
 test("runEpisode: wrong number of policies throws", () => {
   const env = new CooperativeGridWorld({ seed: 5, horizon: 3 });
-  assert.throws(() => runEpisode(env, [new RandomPolicy()], new Rng(5)));
+  assert.throws(() => runEpisode(env, [new RandomPolicy()], 5));
 });
 
 test("runEpisode: without worldModels, every record's worldModelLoss is an array of undefined (one entry per agent)", () => {
   const env = new CooperativeGridWorld({ seed: 7, horizon: 5 });
-  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], new Rng(7));
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], 7);
   for (const record of records) {
     assert.deepEqual(record.worldModelLoss, [undefined, undefined]);
   }
@@ -168,7 +167,7 @@ test(
     const records = runEpisode(
       env,
       [new RandomPolicy(), new RandomPolicy()],
-      new Rng(8),
+      8,
       freezeConfig,
       [frozenWorldModel, trainingWorldModel],
     );

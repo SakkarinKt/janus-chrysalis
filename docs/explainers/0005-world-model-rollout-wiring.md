@@ -210,6 +210,37 @@ roughly equal on both the old and new code — `tf.variableGrads`' own internal 
 intermediates on its own error path when `forward()` throws mid-differentiation, a library-level
 behavior this fix doesn't touch and doesn't attempt to change.
 
+## Amendment 2026-08-09: each agent's `WorldModel` now draws from its own `Rng`
+
+PR #39's review (@SakkarinKt, 2026-08-06) follow-up 2, folded into `loop/GOAL.md` priority 4 per
+PR #41's review (@SakkarinKt, 2026-08-08: "Next: priority 4... with PR #39 follow-up (2)'s
+per-agent Rng folded in at the start"): `runEpisode` used to take one `Rng` instance and pass it
+to every `policies[i].act(obs, rng)` call *and* every `worldModels?.[i]?.step(...)` call, all
+sharing one sequential mulberry32 stream. That meant world-model sampling (the Gumbel-max draws
+inside `RSSMCell.prior()`/`.posterior()`, `docs/explainers/0003`) was interleaved into the same
+stream as the policies' action draws. The intervention/control arms stayed seed-aligned under that
+scheme (see the "Why 'always advance, sometimes train'" section above, PR #39 review: "forward()
+runs exactly once per step() and draws... uniforms unconditionally, so a frozen world model
+consumes exactly the same stream as a training one") — but only because every run in the milestone
+used the same `RSSMConfig` dimensions. Change `latentCategoricals`/`latentClasses` (a model-size
+ablation) and the number of uniforms a `WorldModel.step()` call draws from the shared stream
+changes too, which shifts every *later* policy action draw at a fixed seed — the environment
+trajectory would no longer be held constant across a model-size comparison, defeating the point of
+fixing a seed at all.
+
+Fixed by giving `runEpisode` a numeric `seed` instead of a pre-built `Rng` (breaking change to its
+signature — the two callers, `test/experiment/freeze.test.ts`'s `runEpisode(...)` calls, now pass
+plain numbers where they used to pass `new Rng(n)`). Internally it constructs one `Rng` for the
+policy-action stream (`new Rng(seed)`) and, only when `worldModels` is given, one further `Rng` per
+agent (`new Rng(deriveSeed(seed, i))`, `src/env/rng.ts`) for that agent's `WorldModel.step()`
+calls. `deriveSeed` XORs a large odd constant scaled by `salt + 1` into the base seed — a simple
+deterministic mix, not a cryptographic hash, which is all this needs given the only caller passes
+a handful of small, distinct salts (one per agent index). The RNG-alignment property above still
+holds: each world model still consumes a fixed number of draws from *its own* stream every step
+regardless of `train`, so the intervention and control arms stay aligned to each other — they're
+just no longer aligned to (and can no longer perturb) the policy-action stream, or to each other's
+world-model streams.
+
 ## Test coverage
 
 `test/model/worldModel.test.ts`: constructing a `WorldModel` builds all layers without throwing

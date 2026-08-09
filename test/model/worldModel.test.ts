@@ -212,3 +212,33 @@ test("WorldModel: a throw from forward() with train=false leaks no tensors (tens
 
   wm.dispose();
 });
+
+test("WorldModel: a throw from decoder.decode() — after the tf.keep() calls, unlike every other throw case above — leaves this.state unchanged and leaks no tensors (PR #41 review non-blocking note 1: nextDeterministic?.dispose()/nextStochastic?.dispose() at the catch block was, until this test, exercised by zero tests)", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+  wm.step(Action.Up, OBSERVATION, rng, true);
+
+  wm.decoder.decode = (): tf.Tensor2D => {
+    throw new Error("stubbed decode failure");
+  };
+
+  const before = wm.currentState.deterministic.arraySync();
+  const beforeTensors = tf.memory().numTensors;
+
+  // train=false, matching the other leak checks above, so the pre-existing
+  // tf.variableGrads-internal ~66-tensor error-path cost (unrelated to this
+  // fix, see the train=true throw test above) doesn't obscure the count.
+  assert.throws(() => wm.step(Action.Down, OBSERVATION, rng, false), /stubbed decode failure/);
+
+  const afterTensors = tf.memory().numTensors;
+  assert.equal(
+    afterTensors - beforeTensors,
+    0,
+    `expected 0 net tensor growth across a decode()-throw, got ${afterTensors - beforeTensors}`,
+  );
+
+  const after = wm.currentState.deterministic.arraySync();
+  assert.deepEqual(after, before, "state must be unchanged after a caught throw from decode()");
+
+  wm.dispose();
+});
