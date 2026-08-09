@@ -2,7 +2,7 @@ import type { CooperativeGridWorld } from "../env/gridworld.ts";
 import { NUM_AGENTS } from "../env/types.ts";
 import type { Action, Observation } from "../env/types.ts";
 import type { Policy } from "../agent/policy.ts";
-import type { Rng } from "../env/rng.ts";
+import { Rng, deriveSeed } from "../env/rng.ts";
 import type { WorldModel } from "../model/worldModel.ts";
 
 /**
@@ -72,11 +72,18 @@ export interface EpisodeStepRecord {
  * for `policy.update()` — see docs/explainers/0005-world-model-rollout-wiring.md
  * for why a frozen agent's world model still has to be evaluated, just not
  * trained. Reset at the start of this episode via `WorldModel.reset()`.
+ *
+ * `seed` seeds one `Rng` for the shared policy-action stream (`policies[i].act`)
+ * and, when `worldModels` is given, one further `Rng` per agent for that
+ * agent's `WorldModel.step()` calls — each derived from `seed` via
+ * `deriveSeed` (src/env/rng.ts) so a world model's sampling never shares a
+ * stream with, or shifts, the policy-action draws (docs/explainers/0005-
+ * world-model-rollout-wiring.md, Amendment 2026-08-09; PR #39 review follow-up 2).
  */
 export function runEpisode(
   env: CooperativeGridWorld,
   policies: Policy[],
-  rng: Rng,
+  seed: number,
   freezeConfig?: FreezeConfig,
   worldModels?: (WorldModel | undefined)[],
 ): EpisodeStepRecord[] {
@@ -86,12 +93,15 @@ export function runEpisode(
 
   worldModels?.forEach((worldModel) => worldModel?.reset());
 
+  const policyRng = new Rng(seed);
+  const worldModelRngs = worldModels?.map((_, i) => new Rng(deriveSeed(seed, i)));
+
   const records: EpisodeStepRecord[] = [];
   let observations = env.reset().observations;
   let done = false;
 
   while (!done) {
-    const actions = observations.map((obs, i) => policies[i].act(obs, rng)) as Action[];
+    const actions = observations.map((obs, i) => policies[i].act(obs, policyRng)) as Action[];
     const result = env.step(actions);
     const frozen = observations.map((_, i) =>
       freezeConfig ? isFrozen(i, result.step, freezeConfig) : false,
@@ -110,7 +120,7 @@ export function runEpisode(
     });
 
     const worldModelLoss = observations.map(
-      (_, i) => worldModels?.[i]?.step(actions[i], result.observations[i], rng, !frozen[i]).loss,
+      (_, i) => worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i]).loss,
     );
 
     records.push({
