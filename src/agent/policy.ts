@@ -35,3 +35,95 @@ export class RandomPolicy implements Policy {
     return ACTION_VALUES[rng.nextInt(ACTION_VALUES.length)];
   }
 }
+
+export interface QLearningConfig {
+  /**
+   * TD learning rate. Default `0.1` — a common small-tabular-MDP placeholder,
+   * not tuned against this environment; see
+   * docs/explainers/0008-tabular-q-learning-policy.md.
+   */
+  alpha?: number;
+  /** Discount factor. Default `0.95`, same placeholder status as `alpha`. */
+  gamma?: number;
+  /** Epsilon-greedy exploration rate. Default `0.1`, same placeholder status. */
+  epsilon?: number;
+}
+
+const DEFAULT_Q_LEARNING_CONFIG: Required<QLearningConfig> = {
+  alpha: 0.1,
+  gamma: 0.95,
+  epsilon: 0.1,
+};
+
+function actionAt(index: number): Action {
+  const action = ACTION_VALUES[index];
+  if (action === undefined) {
+    throw new Error(`QLearningPolicy: action index ${index} out of range`);
+  }
+  return action;
+}
+
+function qValueAt(row: number[], index: number): number {
+  const value = row[index];
+  if (value === undefined) {
+    throw new Error(`QLearningPolicy: q-value index ${index} out of range`);
+  }
+  return value;
+}
+
+/** The highest-valued (index, value) pair in `row`, ties broken by lowest index. */
+function argmaxRow(row: number[]): { index: number; value: number } {
+  let bestIndex = 0;
+  let bestValue = qValueAt(row, 0);
+  for (let i = 1; i < row.length; i++) {
+    const value = qValueAt(row, i);
+    if (value > bestValue) {
+      bestValue = value;
+      bestIndex = i;
+    }
+  }
+  return { index: bestIndex, value: bestValue };
+}
+
+/**
+ * Tabular Q-learning over the discrete action space (`loop/GOAL.md` priority
+ * 4's trainable-policy prerequisite — see
+ * docs/explainers/0008-tabular-q-learning-policy.md for discretization,
+ * tie-breaking, and freeze-interaction rationale). Discretizes `Observation`
+ * by using its own values as a map key, exact rather than binned for
+ * `CooperativeGridWorld`'s specific encoding (see the explainer).
+ */
+export class QLearningPolicy implements Policy {
+  private readonly config: Required<QLearningConfig>;
+  private readonly qTable = new Map<string, number[]>();
+
+  constructor(config: QLearningConfig = {}) {
+    this.config = { ...DEFAULT_Q_LEARNING_CONFIG, ...config };
+  }
+
+  private qRow(observation: Observation): number[] {
+    const key = observation.join(",");
+    let row = this.qTable.get(key);
+    if (row === undefined) {
+      row = new Array(ACTION_VALUES.length).fill(0);
+      this.qTable.set(key, row);
+    }
+    return row;
+  }
+
+  act(observation: Observation, rng: Rng): Action {
+    if (rng.next() < this.config.epsilon) {
+      return actionAt(rng.nextInt(ACTION_VALUES.length));
+    }
+    return actionAt(argmaxRow(this.qRow(observation)).index);
+  }
+
+  update(transition: Transition): void {
+    const row = this.qRow(transition.observation);
+    const actionIndex = ACTION_VALUES.indexOf(transition.action);
+    const current = qValueAt(row, actionIndex);
+    const nextMax = transition.done ? 0 : argmaxRow(this.qRow(transition.nextObservation)).value;
+    row[actionIndex] =
+      current + this.config.alpha * (transition.reward + this.config.gamma * nextMax - current);
+  }
+}
