@@ -23,9 +23,40 @@ Otherwise returns the action at the Q-row's highest value, ties broken by lowest
 `Action.Stay` wins on an all-zero/tied row — see "Tie-breaking" below).
 
 **`update(transition)`**: the standard one-step tabular TD update —
-`Q(s,a) += alpha * (reward + gamma * max_a' Q(s', a') - Q(s,a))`, with the bootstrap term
-(`gamma * max_a' Q(s', a')`) dropped to exactly `0` when `transition.done` is `true` — a terminal
-transition has no next state to bootstrap from, the standard tabular-Q-learning convention.
+`Q(s,a) += alpha * (reward + gamma * max_a' Q(s', a') - Q(s,a))`. The bootstrap term
+(`gamma * max_a' Q(s', a')`) is **always** included, even when `transition.done` is `true` — see
+"Bootstrap on `done`" below for why this env's `done` doesn't mean what the standard
+terminal-state convention assumes.
+
+### Bootstrap on `done`: this is a truncation flag, not a terminal-state flag
+
+**Correction, 2026-08-11 (PR #43 review, @SakkarinKt):** the first version of this explainer said
+the bootstrap term is "dropped to exactly `0` when `transition.done` is `true` — a terminal
+transition has no next state to bootstrap from, the standard tabular-Q-learning convention." That
+was wrong for this environment and the code has been fixed to match (`src/agent/policy.ts`'s
+`update()` no longer branches on `transition.done` at all).
+
+`CooperativeGridWorld` (`src/env/gridworld.ts`) has no absorbing/goal state — `step()` sets
+`done = currentStep >= horizon` unconditionally, so every `done: true` transition is a
+**time-limit truncation**, never a true episode end with "no next state." The state genuinely
+continues to exist (the grid positions are well-defined) even at `currentStep === horizon`; the
+episode just stops being simulated further. Dropping the bootstrap there suppresses real signal
+about a state that does have a successor, biasing the TD target on exactly the last transition of
+every episode. Since `computeReward()` constructs rewards `≤ 0` (negated coverage distance, minus
+a collision penalty), the dropped bootstrap term is always non-negative, so the bias is
+one-directional — the truncated-transition Q-value is nudged *upward* relative to what it would be
+with the bootstrap included, at `alpha` per episode (0.1 by default) on the 1-in-`horizon`
+transitions this hits (1/75 for the default 75-step horizon). This lands specifically in the
+end-of-episode states the drift-attributable-error metric (`loop/GOAL.md` priority 4) cares about.
+
+The general fix would be to distinguish termination from truncation as separate `StepResult`
+fields (the `terminated`/`truncated` split e.g. Gymnasium uses) — not done here since
+`CooperativeGridWorld` has no termination case to distinguish *from*, and adding an always-`false`
+`terminated` field to `StepResult`/`Transition` across `src/env/types.ts`, `gridworld.ts`, and
+`src/experiment/freeze.ts` is more surface than this fix needs. If a future environment adds a
+true absorbing state, `Transition` will need that split for real, and `QLearningPolicy.update`
+will need to branch on it — `transition.done` alone will no longer be sufficient to decide whether
+to bootstrap.
 
 **`QLearningConfig`**: `{ alpha?, gamma?, epsilon? }`, defaults `{ alpha: 0.1, gamma: 0.95,
 epsilon: 0.1 }` — common small-tabular-MDP placeholder values (e.g. Sutton & Barto's worked
@@ -61,15 +92,26 @@ silently.
 
 On a tied Q-row (every fresh state starts all-zero, so first `epsilon`-failing visit to any new
 state is a tie across all 5 actions), `act()` picks the lowest index — `Action.Stay` — rather than
-breaking the tie via a further `rng` draw. Chosen for simplicity: `epsilon`-greedy exploration
-already guarantees every action gets sampled at every visited state with nonzero probability
-independent of how ties resolve, so a leftmost tie-break doesn't block exploration, it only biases
-which action wins a state's *first* greedy visit before any learning has happened there. A
-random tie-break would consume an extra, variable number of `rng` draws only on tied rows,
-complicating the draw-count reasoning `docs/explainers/0005`'s per-agent-`Rng` amendment relies on
-for no behavioral necessity. Revisit if the leftmost bias turns out to matter empirically (e.g. if
-it measurably slows early learning by under-sampling non-`Stay` actions before `epsilon` first
-fires on a given state).
+breaking the tie via a further `rng` draw. Chosen for simplicity: every action still gets sampled
+at every visited state with nonzero probability independent of how ties resolve, so a leftmost
+tie-break doesn't block exploration, it only biases which action wins a state's *first* greedy
+visit before any learning has happened there. A random tie-break would consume an extra, variable
+number of `rng` draws only on tied rows, complicating the draw-count reasoning
+`docs/explainers/0005`'s per-agent-`Rng` amendment relies on for no behavioral necessity. Revisit
+if the leftmost bias turns out to matter empirically (e.g. if it measurably slows early learning
+by under-sampling non-`Stay` actions before `epsilon` first fires on a given state).
+
+**Correction, 2026-08-11 (PR #43 review, @SakkarinKt):** the previous paragraph attributed
+"every action gets sampled" to `epsilon`-greedy exploration alone. The conclusion holds but that
+mechanism is incomplete for this environment: `computeReward()` constructs rewards `≤ 0`, and
+every fresh Q-row starts at exactly `0`. Under greedy (non-`epsilon`) selection, an
+as-yet-untried action's `0` entry outranks every tried action's now-negative entry — so the
+*zero-initialization* is doing optimistic-initialization-style exploration on every greedy visit
+to a state, independent of `epsilon` firing at all. `epsilon: 0.1`'s random draws add further,
+uniform exploration on top, but they are not the reason greedy selection alone keeps visiting
+untried actions here — that's the zero-init-in-a-nonpositive-reward-domain effect. Worth keeping
+in mind when reading freeze-run results: `epsilon: 0.1` is doing less of the state-coverage work
+than its name suggests, for as long as visited actions' Q-values stay negative.
 
 ## Interaction with the freeze mechanism
 

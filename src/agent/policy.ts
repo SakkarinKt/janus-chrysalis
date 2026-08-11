@@ -122,7 +122,12 @@ export class QLearningPolicy implements Policy {
     const row = this.qRow(transition.observation);
     const actionIndex = ACTION_VALUES.indexOf(transition.action);
     const current = qValueAt(row, actionIndex);
-    const nextMax = transition.done ? 0 : argmaxRow(this.qRow(transition.nextObservation)).value;
+    // `transition.done` marks a time-limit truncation (CooperativeGridWorld.step:
+    // `done = currentStep >= horizon`), not a terminal/absorbing state — the env
+    // has none. Dropping the bootstrap on `done` therefore biased the last
+    // transition of every episode; always bootstrap instead. See PR #43 review
+    // (@SakkarinKt, 2026-08-11) and docs/explainers/0008.
+    const nextMax = argmaxRow(this.qRow(transition.nextObservation)).value;
     row[actionIndex] =
       current + this.config.alpha * (transition.reward + this.config.gamma * nextMax - current);
   }

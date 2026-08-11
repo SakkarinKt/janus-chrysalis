@@ -126,20 +126,24 @@ test("QLearningPolicy.update bootstraps gamma*max(next) when done is false", () 
   assert.equal(policy.act(obsA, rng), Action.Up);
 });
 
-test("QLearningPolicy.update does not bootstrap from the next observation when done is true", () => {
+test("QLearningPolicy.update still bootstraps from the next observation when done is true", () => {
+  // `done: true` marks a time-limit truncation in CooperativeGridWorld (no
+  // terminal/absorbing state exists), not a true episode end — so it must
+  // NOT suppress the bootstrap. See PR #43 review (@SakkarinKt, 2026-08-11)
+  // and docs/explainers/0008 "Bootstrap on `done`".
   const policy = new QLearningPolicy({ alpha: 1, gamma: 0.9, epsilon: 0 });
   const rng = new Rng(1);
   const obsA = [2, 2];
-  const obsB = [3, 3]; // holds a large decoy Q-value that must NOT leak in via bootstrap
+  const obsB = [3, 3]; // holds a large decoy Q-value that must leak in via bootstrap
   const obsZ = [9, 9];
 
   policy.update({ observation: obsB, action: Action.Stay, reward: 1000, nextObservation: obsZ, done: false });
   // Decoy: Q(obsA, Down) = 800, isolated the same way.
   policy.update({ observation: obsA, action: Action.Down, reward: 800, nextObservation: obsZ, done: false });
-  // If done: true correctly suppresses the bootstrap, Q(obsA, Up) = 5 + 0.9*0 = 5, well below
-  // the 800 decoy. A bootstrap bug would instead land it at 5 + 0.9*1000 = 905, above the decoy,
-  // flipping the greedy action.
+  // Q(obsA, Up) = 5 + 0.9 * max(Q(obsB, *)) = 5 + 900 = 905, above the 800 decoy, even
+  // though this transition is marked done: true — a truncation, not a terminal state.
+  // A done-suppresses-bootstrap bug would instead land it at 5 + 0.9*0 = 5, below the decoy.
   policy.update({ observation: obsA, action: Action.Up, reward: 5, nextObservation: obsB, done: true });
 
-  assert.equal(policy.act(obsA, rng), Action.Down);
+  assert.equal(policy.act(obsA, rng), Action.Up);
 });
