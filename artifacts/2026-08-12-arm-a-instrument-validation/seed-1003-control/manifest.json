@@ -1,0 +1,129 @@
+{
+  "runId": "2026-08-12-arm-a-instrument-validation",
+  "seed": 1003,
+  "condition": "control",
+  "frozenAgentIndex": null,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "d714c9adbdbf5339ccab5dd3456a9b4bbc965e21",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-12T01:24:27.137Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "seed": 1003,
+    "condition": "control",
+    "postFreezeSteps": 38,
+    "meanLoss": 1.7014014375837225,
+    "slopeLoss": -0.0070681146855870345
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "RSSMCell/ObservationDecoder layer weight init (tf.layers.dense/gruCell) is not seeded through this project's Rng — see this file's header comment and weightInitDiagnostic below. Not fixed in this run.",
+      "weightInitDiagnostic": {
+        "claim": "two fresh WorldModels, identical config, first 4 weight values of each trainable tensor",
+        "modelA": [
+          [
+            -0.00867058988660574,
+            -0.005356631241738796,
+            -0.04411578178405762,
+            0.011108589358627796
+          ],
+          [
+            0.042694091796875,
+            0.025948897004127502,
+            0.04563611373305321,
+            -0.0039454358629882336
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0.09211798757314682,
+            -0.005601252894848585,
+            -0.048081256449222565,
+            -0.0434427410364151
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            -0.004900260828435421,
+            -0.13130494952201843,
+            -0.10814077407121658,
+            -0.09701674431562424
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ]
+        ],
+        "modelB": [
+          [
+            0.018515652045607567,
+            -0.02477983757853508,
+            -0.06681087613105774,
+            -0.06743013113737106
+          ],
+          [
+            0.025156378746032715,
+            -0.027627237141132355,
+            -0.014252100139856339,
+            0.0022280982229858637
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            -0.01371482852846384,
+            0.0317087285220623,
+            -0.003508615307509899,
+            -0.035484734922647476
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0.06084340438246727,
+            0.03588811308145523,
+            0.12514080107212067,
+            -0.07649042457342148
+          ],
+          [
+            0,
+            0,
+            0,
+            0
+          ]
+        ],
+        "identical": false
+      }
+    }
+  ]
+}
