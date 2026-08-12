@@ -316,3 +316,66 @@ priority 3 is not blocked**. `test/model/rssm.test.ts`'s multi-step test now che
 gradient using the detached-constant construction (a genuine correctness check that passes because
 the computation is correct), rather than either the original flaky check or the briefly-shipped
 bug-pin. No "Decisions needed" item from this.
+
+**2026-08-12 update**: `loop/GOAL.md` priority 4's second half — the 3-seed freeze-vs-both-frozen
+instrument-validation runs (metric plumbing itself landed PR #42; `QLearningPolicy` landed
+PR #43/#44, per PR #44's review, @SakkarinKt, 2026-08-12: "Next: priority 4 — wire it into the
+freeze-vs-both-frozen episode pairing and land the 3-seed instrument-validation runs"). Runner:
+`experiments/2026-08-12-arm-a-instrument-validation/run.ts`. Per seed, one `"control"`-condition
+episode and one `"intervention"`-condition episode (`FreezeConfig`, `src/experiment/freeze.ts`),
+each a single 75-step episode (`DEFAULT_CONFIG.horizon`), `freezeStep: 38`, `frozenAgentIndex: 0`,
+Arm-A dims (`{deterministicSize: 256, latentCategoricals: 8, latentClasses: 4}`, same placeholder
+as `benchmark.ts`'s `ARM_A_CONFIG`), both agents driven by `QLearningPolicy` (default config) with
+one independent `WorldModel` each. Manifests + `results.summary.csv` committed under
+`artifacts/2026-08-12-arm-a-instrument-validation/` (per-seed `telemetry.jsonl` written but not
+committed, per `loop/GOAL.md` boundaries and `.gitignore`'s existing `artifacts/**` rule).
+
+**Result: inconclusive, not a clean pass on either half of the gate** (`self_checked, medium
+confidence`) — reported honestly rather than called a pass:
+
+| seed | control slope | intervention slope | diffMean (intervention − control) |
+| --- | --- | --- | --- |
+| 1001 | +0.0086 | +0.0096 | −0.3022 |
+| 1002 | +0.0354 | +0.0301 | +0.1066 |
+| 1003 | −0.0071 | −0.0026 | +0.1839 |
+
+(`slope` = OLS slope of `postFreezeLossSeries` against steps-since-freeze index; `diffMean` = mean
+of `driftAttributableError`, both from `src/experiment/metrics.ts`, computed over each run's 38
+post-freeze steps.) Gate (a) (control stays flat): control's slope sign flips across seeds and its
+magnitude is comparable to the intervention slope's — not a clean "flat," though n=3 makes "flat
+vs. noisy" hard to distinguish either way. Gate (b) (intervention rises measurably above control):
+`diffMean` is mixed-sign across seeds (negative for seed 1001, positive for 1002/1003) — no
+consistent rising signal.
+
+Leading hypothesis, not confirmed (`self_checked, medium confidence`): **37 pre-freeze steps is
+very little training** for a from-zero tabular `QLearningPolicy` whose state key is the (near-)
+continuous raw observation vector (`src/agent/policy.ts`'s `qRow`) — most of those 37 steps likely
+hit previously-unseen keys rather than updating a revisited one, so the still-training partner
+agent has barely started to drift from near-random behavior by the freeze point, leaving little
+co-learning drift for the post-freeze window to detect. This would make today's result an
+underpowered pilot, not evidence the measurement mechanism itself is broken — but that's a
+hypothesis about *why*, not a confirmed diagnosis; distinguishing it from "the instrument doesn't
+work" needs a follow-up run at a longer pre-freeze training horizon (many episodes of training
+before the freeze point, not steps 1-37 of one episode) before this milestone's gate can be
+evaluated for real. Not proposed as this run's fix — sizing that follow-up (episode count, whether
+`freezeStep` needs to move to a multi-episode training-then-freeze structure at all) is next
+increment's design call, not decided unilaterally here.
+
+**Second finding, orthogonal to the above** (`self_checked, high confidence`): `RSSMCell`'s
+`tf.layers.gruCell`/`tf.layers.dense` and `ObservationDecoder`'s `tf.layers.dense` are constructed
+with no `kernelInitializer` seed (`src/model/rssm.ts:95-98`, `src/model/decoder.ts:26`) — two
+fresh `WorldModel`s with identical config draw different initial weights from tfjs's own unseeded
+global initializer, confirmed directly by this run (`checkWeightInitDeterminism` in `run.ts`,
+recorded in every manifest's `findings` field) and independently by re-running the script twice at
+the same 3 seeds and getting different numbers both times (the table above is one of those two
+runs). This means `runEpisode`'s `seed` does not make a `WorldModel`-involving run fully
+bit-reproducible today — only the policy-action and world-model-*sampling* streams are seeded
+(finding #1 from the 2026-08-03 quality pass, fixed 2026-08-04), not layer weight *initialization*.
+Not fixed in this run: the fix touches `RSSMCell`/`ObservationDecoder`'s public construction
+surface (threading a seed into every `tf.layers.*` call), which is `src/model/` API-surface work
+for whoever next touches that surface, not an experiment-script fix. Flagged here and in this run's
+stand-up report rather than raised as "Decisions needed" — it doesn't block interpreting today's
+result (the inconclusive read above doesn't depend on run-to-run reproducibility), but it does mean
+any future run of this exact script should not be expected to reproduce today's exact numbers.
+
+Full detail, both findings, and the raw per-seed manifests: `artifacts/2026-08-12-arm-a-instrument-validation/`.
