@@ -379,3 +379,53 @@ result (the inconclusive read above doesn't depend on run-to-run reproducibility
 any future run of this exact script should not be expected to reproduce today's exact numbers.
 
 Full detail, both findings, and the raw per-seed manifests: `artifacts/2026-08-12-arm-a-instrument-validation/`.
+
+**2026-08-13 update**: processing PR #45's review (@SakkarinKt, 2026-08-12: "gate (b) isn't
+readable until init is seeded or paired across conditions... seed or pair world-model init before
+spending compute on a longer pre-freeze horizon"). Fixed the weight-init-determinism gap the
+2026-08-12 update flagged: `RSSMConfig.seed`/`DecoderConfig.seed`/`WorldModelConfig.seed`
+(`src/model/rssm.ts`, `src/model/decoder.ts`, `src/model/worldModel.ts`) derive per-layer seeds
+via `deriveSeed` and pass them to every `tf.layers.*` call's `kernelInitializer`/
+`recurrentInitializer` (bias stays the tfjs default `zeros`, already deterministic). New tests:
+`test/model/rssm.test.ts`, `test/model/decoder.test.ts`, `test/model/worldModel.test.ts` (same
+seed → identical initial weights; different seeds → different; omitted seed → unchanged unseeded
+fallback). `npm test`: 100/100 (95 prior + 5 new). `npm run typecheck:ratchet`: 44/44, unchanged.
+
+Re-ran the identical 3-seed Arm-A validation —
+`experiments/2026-08-13-paired-init-instrument-validation/run.ts`, same `SEEDS`, `freezeStep: 38`,
+`frozenAgentIndex: 0`, Arm-A dims — but now passing the trial's `seed` into both conditions'
+`WorldModel`s (`WorldModelConfig.seed`), pairing control and intervention on identical initial
+weights per agent. This turned out to pair the *entire* pre-freeze phase, not just initialization:
+`runEpisode`'s `policyRng`/`worldModelRngs` are already `seed`-derived and `freezeConfig` never
+gates which action gets chosen or which RNG value gets drawn, only whether `update()`/training
+runs — so once init was the only remaining source of divergence, fixing it made control's and
+intervention's pre-freeze `EpisodeStepRecord`s (actions, rewards, observations, world-model
+losses) bit-identical for a given seed. Confirmed directly, not assumed: this run's
+`assertPreFreezeParity` diagnostic checks every pre-freeze record field-by-field and is `true` for
+all 3 seeds (recorded in each manifest's `findings[0].preFreezeParityCheck`, `identical: true`).
+
+| seed | control slope | intervention slope | diffMean (intervention − control) |
+| --- | --- | --- | --- |
+| 1001 | +0.006150 | +0.007996 | −0.0936 |
+| 1002 | +0.070358 | +0.069888 | +0.0036 |
+| 1003 | −0.001425 | −0.001425 | +0.0000 |
+
+**Result: still not a clean gate (b) pass, but the picture changed** (`self_checked, medium-high
+confidence`). `diffMean` magnitudes collapsed from 2026-08-12's `[−0.3022, +0.1066, +0.1839]` to
+`[−0.0936, +0.0036, +0.0000]` — roughly in line with @SakkarinKt's PR #45 review estimate that a
+control-vs-control pairing under the old unseeded init would show noise of "the same magnitude as
+the reported −0.30/+0.11/+0.18," i.e. most of 2026-08-12's signal *was* init noise, not a
+freeze effect, as the review predicted. What's left after removing that noise is small and still
+mixed-sign, not confirming a freeze effect either. Seed 1003's `diffMean` is exactly `0.0000`,
+not just small — intervention and control produced bit-identical `postFreezeLossSeries` for that
+seed, meaning agent 1's post-freeze actions never diverged between "kept training" and "frozen"
+for that particular trajectory (self_checked, high confidence, read directly off the equal
+telemetry). This is consistent with, and firmer evidence for, the 2026-08-12 hypothesis this
+update doesn't newly test: 37 pre-freeze steps may be too few for `QLearningPolicy`'s Q-table to
+reach states post-freeze where continuing to train vs. not would actually pick a different action —
+if post-freeze exploration keeps landing on already-converged or already-explored keys, "frozen"
+and "training" are behaviorally the same regardless of how clean the measurement is. Distinguishing
+that from "the mechanism doesn't work at all" still needs the longer-pre-freeze-horizon follow-up
+the 2026-08-12 update proposed (not attempted in this run — one increment).
+
+Full detail and the raw per-seed manifests: `artifacts/2026-08-13-paired-init-instrument-validation/`.

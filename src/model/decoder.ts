@@ -3,6 +3,13 @@ import tf from "@tensorflow/tfjs-node";
 export interface DecoderConfig {
   /** Fixed length of this environment's `Observation` vector — see `src/env/types.ts`. */
   observationSize: number;
+  /**
+   * Seeds the dense layer's kernel initializer — see `RSSMConfig.seed`
+   * (`src/model/rssm.ts`) for why this exists and what it does and doesn't
+   * cover. Omit to fall back to tfjs's unseeded global initializer, as
+   * before this field existed.
+   */
+  seed?: number;
 }
 
 /**
@@ -23,7 +30,12 @@ export class ObservationDecoder {
   private readonly dense: ReturnType<typeof tf.layers.dense>;
 
   constructor(config: DecoderConfig) {
-    this.dense = tf.layers.dense({ units: config.observationSize });
+    this.dense = tf.layers.dense({
+      units: config.observationSize,
+      ...(config.seed !== undefined && {
+        kernelInitializer: tf.initializers.glorotNormal({ seed: config.seed }),
+      }),
+    });
   }
 
   /** Reconstructs `[batch, observationSize]` from `concat([deterministic, stochastic], 1)`. */

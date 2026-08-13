@@ -6,6 +6,7 @@ import {
   sampleHard,
   straightThroughEstimator,
   type LatentSampleSource,
+  type RSSMConfig,
   type RSSMState,
 } from "../../src/model/rssm.ts";
 import { Action } from "../../src/env/types.ts";
@@ -483,6 +484,38 @@ test(
     );
   },
 );
+
+/**
+ * Builds an RSSMCell and forces every layer's lazy build (a step() + prior()
+ * + posterior() call, like WorldModel's constructor warmup pass), then
+ * returns every trainable weight's values — trainableWeights() is `[]`
+ * before any layer has built, which would make a same-seed/different-seed
+ * weight comparison vacuously pass either way.
+ */
+function builtWeights(config: RSSMConfig): number[][] {
+  const rssm = new RSSMCell(config);
+  const deterministic = rssm.step(rssm.initialState(1), [Action.Up]);
+  rssm.prior(deterministic, { rng: new Rng(0) });
+  rssm.posterior(deterministic, tf.zeros([1, 3]) as tf.Tensor2D, { rng: new Rng(0) });
+  return rssm.trainableWeights().map((w) => Array.from(w.dataSync()));
+}
+
+test("RSSMCell: same seed reproduces identical initial weights across independent instances (processing PR #45's review — the unseeded-init gap it flagged)", () => {
+  const config = { deterministicSize: 4, latentCategoricals: 3, latentClasses: 5, seed: 42 };
+  assert.deepEqual(builtWeights(config), builtWeights(config));
+});
+
+test("RSSMCell: different seeds draw different initial weights", () => {
+  const a = builtWeights({ deterministicSize: 4, latentCategoricals: 3, latentClasses: 5, seed: 1 });
+  const b = builtWeights({ deterministicSize: 4, latentCategoricals: 3, latentClasses: 5, seed: 2 });
+  assert.notDeepEqual(a, b);
+});
+
+test("RSSMCell: omitting seed still constructs and builds without throwing (unseeded fallback preserved)", () => {
+  const rssm = new RSSMCell({ deterministicSize: 4, latentCategoricals: 3, latentClasses: 5 });
+  rssm.step(rssm.initialState(1), [Action.Up]);
+  assert.ok(rssm.trainableWeights().length > 0);
+});
 
 test("sampleHard: exactly one 1 per [batch, categorical] row, rest 0", () => {
   const logits = tf.tensor3d([

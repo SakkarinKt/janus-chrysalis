@@ -6,7 +6,7 @@ import type { KLBalancedLossConfig } from "./losses.ts";
 import { ObservationDecoder } from "./decoder.ts";
 import { Action } from "../env/types.ts";
 import type { Observation } from "../env/types.ts";
-import { Rng } from "../env/rng.ts";
+import { deriveSeed, Rng } from "../env/rng.ts";
 
 export interface WorldModelConfig {
   rssm: RSSMConfig;
@@ -21,6 +21,16 @@ export interface WorldModelConfig {
    * docs/explainers/0005-world-model-rollout-wiring.md.
    */
   learningRate?: number;
+  /**
+   * Seeds this model's weight initialization — `deriveSeed`d into one
+   * stream for the `RSSMCell` (salt 0) and one for the `ObservationDecoder`
+   * (salt 1), so the two don't draw correlated initial weights from the
+   * same raw seed. Takes precedence over a `seed` set directly on `rssm`.
+   * Omit for tfjs's unseeded global initializer, as before this field
+   * existed — see `RSSMConfig.seed`'s doc comment (`src/model/rssm.ts`)
+   * for what this does and doesn't cover.
+   */
+  seed?: number;
 }
 
 export interface WorldModelStepResult {
@@ -51,8 +61,12 @@ export class WorldModel {
   private state: RSSMState;
 
   constructor(config: WorldModelConfig) {
-    this.cell = new RSSMCell(config.rssm);
-    this.decoder = new ObservationDecoder({ observationSize: config.observationSize });
+    const rssmConfig = config.seed !== undefined ? { ...config.rssm, seed: deriveSeed(config.seed, 0) } : config.rssm;
+    this.cell = new RSSMCell(rssmConfig);
+    this.decoder = new ObservationDecoder({
+      observationSize: config.observationSize,
+      ...(config.seed !== undefined && { seed: deriveSeed(config.seed, 1) }),
+    });
     this.lossConfig = config.lossConfig ?? {};
     this.optimizer = tf.train.adam(config.learningRate ?? 1e-3);
     this.state = this.cell.initialState(1);
