@@ -1,0 +1,43 @@
+{
+  "runId": "2026-08-13-paired-init-instrument-validation",
+  "seed": 1003,
+  "condition": "intervention",
+  "frozenAgentIndex": 0,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "597753cab0f283934fe09833c699901ddb887f3c",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-13T01:17:47.429Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "seed": 1003,
+    "condition": "intervention",
+    "postFreezeSteps": 38,
+    "meanLoss": 1.7789287347542613,
+    "slopeLoss": -0.0014247969551098951
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "World-model init is now seeded and paired across control/intervention for this seed (WorldModelConfig.seed, processing PR #45's review) — see preFreezeParityCheck.",
+      "preFreezeParityCheck": {
+        "claim": "every pre-freezeStep EpisodeStepRecord (actions, reward, observations, nextObservations, worldModelLoss) is bit-identical between control and intervention for the same seed",
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    }
+  ]
+}

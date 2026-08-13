@@ -15,6 +15,25 @@ test("WorldModel: construction builds every layer without throwing, trainableWei
   wm.dispose();
 });
 
+test("WorldModel: seed reproduces identical initial weights (cell + decoder) across independent instances; different seeds diverge — the fix for PR #45's review (gate (b) isn't readable until init is seeded or paired)", () => {
+  const weightsOf = (wm: WorldModel) => [
+    ...wm.cell.trainableWeights().map((w) => Array.from(w.dataSync())),
+    ...wm.decoder.trainableWeights().map((w) => Array.from(w.dataSync())),
+  ];
+
+  const a = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, seed: 1001 });
+  const b = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, seed: 1001 });
+  assert.deepEqual(weightsOf(a), weightsOf(b), "same seed must draw identical initial weights");
+  a.dispose();
+  b.dispose();
+
+  const c = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, seed: 1001 });
+  const d = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, seed: 1002 });
+  assert.notDeepEqual(weightsOf(c), weightsOf(d), "different seeds must draw different initial weights");
+  c.dispose();
+  d.dispose();
+});
+
 test("WorldModel: initial state is zero, matching RSSMCell.initialState(1)", () => {
   const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
   const { deterministic, stochastic } = wm.currentState;

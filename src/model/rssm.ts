@@ -1,5 +1,6 @@
 import tf from "@tensorflow/tfjs-node";
 import { Action } from "../env/types.ts";
+import { deriveSeed } from "../env/rng.ts";
 import type { Rng } from "../env/rng.ts";
 
 const NUM_ACTIONS = Object.keys(Action).length;
@@ -11,6 +12,15 @@ export interface RSSMConfig {
   latentCategoricals: number;
   /** Number of classes per categorical variable. */
   latentClasses: number;
+  /**
+   * Seeds this cell's layer weight initialization (GRU cell kernel +
+   * recurrent kernel, both dense heads' kernels — bias stays the tfjs
+   * default `zeros`, already deterministic). Omit to fall back to tfjs's
+   * own unseeded global initializer, as before this field existed. See the
+   * class doc comment's "Weight-init determinism" note and
+   * `docs/explainers/0003-rssm-world-model-cell.md`'s addendum.
+   */
+  seed?: number;
 }
 
 export interface RSSMState {
@@ -83,6 +93,20 @@ export type LatentSampleSource = { rng: Rng } | { fixedHard: tf.Tensor3D };
  * next `RSSMState`). Wrapping only the differentiated forward function
  * itself in `tf.tidy` would dispose those intermediates *before* the
  * backward pass runs and is not safe.
+ *
+ * **Weight-init determinism (`RSSMConfig.seed`, added processing PR #45's
+ * review):** with no `seed`, every `tf.layers.*` call below falls back to
+ * tfjs's own global (unseeded) initializer RNG, so two `RSSMCell`s built
+ * from identical config draw different initial weights even under an
+ * otherwise-identical run seed — confirmed by
+ * `experiments/2026-08-12-arm-a-instrument-validation/run.ts`'s
+ * `checkWeightInitDeterminism` diagnostic. Passing `seed` derives four
+ * distinct per-layer seeds via `deriveSeed` (GRU kernel, GRU recurrent
+ * kernel, prior-head kernel, posterior-head kernel) so a given `seed`
+ * reproduces the same initial weights run to run; bias stays the tfjs
+ * default `zeros`, already deterministic, so it isn't threaded through.
+ * This only fixes *initialization* — `prior()`/`posterior()`'s own
+ * sampling still needs its own `rng`, per `LatentSampleSource` above.
  */
 export class RSSMCell {
   readonly config: RSSMConfig;
@@ -92,10 +116,23 @@ export class RSSMCell {
 
   constructor(config: RSSMConfig) {
     this.config = config;
-    this.cell = tf.layers.gruCell({ units: config.deterministicSize });
+    const { seed } = config;
+    this.cell = tf.layers.gruCell({
+      units: config.deterministicSize,
+      ...(seed !== undefined && {
+        kernelInitializer: tf.initializers.glorotNormal({ seed: deriveSeed(seed, 0) }),
+        recurrentInitializer: tf.initializers.orthogonal({ seed: deriveSeed(seed, 1) }),
+      }),
+    });
     const stochasticSize = config.latentCategoricals * config.latentClasses;
-    this.priorDense = tf.layers.dense({ units: stochasticSize });
-    this.posteriorDense = tf.layers.dense({ units: stochasticSize });
+    this.priorDense = tf.layers.dense({
+      units: stochasticSize,
+      ...(seed !== undefined && { kernelInitializer: tf.initializers.glorotNormal({ seed: deriveSeed(seed, 2) }) }),
+    });
+    this.posteriorDense = tf.layers.dense({
+      units: stochasticSize,
+      ...(seed !== undefined && { kernelInitializer: tf.initializers.glorotNormal({ seed: deriveSeed(seed, 3) }) }),
+    });
   }
 
   initialState(batchSize: number): RSSMState {
