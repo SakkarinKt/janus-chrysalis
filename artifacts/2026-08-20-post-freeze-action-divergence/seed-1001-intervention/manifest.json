@@ -1,0 +1,52 @@
+{
+  "runId": "2026-08-20-post-freeze-action-divergence",
+  "seed": 1001,
+  "condition": "intervention",
+  "frozenAgentIndex": 0,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "d57df501c8a81e628fbe49415fc1ceca1304d5df",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-20T01:13:51.147Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "seed": 1001,
+    "condition": "intervention",
+    "postFreezeSteps": 38,
+    "meanLoss": 1.8443064721007096,
+    "slopeLoss": 0.007996090432332032
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "World-model init is seeded and paired across control/intervention for this seed (WorldModelConfig.seed, PR #46) — see preFreezeParityCheck.",
+      "preFreezeParityCheck": {
+        "claim": "every pre-freezeStep EpisodeStepRecord (actions, reward, observations, nextObservations, worldModelLoss) is bit-identical between control and intervention for the same seed",
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze action-divergence count (PR #46 review follow-up 1, 2026-08-13): of this seed's post-freeze steps, how many had control and intervention pick different joint actions. 0 means the post-freeze window never gave the two conditions a chance to diverge at all — distinct from, and not detectable by, diffMean alone.",
+      "postFreezeActionDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 22
+      }
+    }
+  ]
+}
