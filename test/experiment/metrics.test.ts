@@ -1,15 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { postFreezeLossSeries, driftAttributableError, postFreezeActionDivergenceCount } from "../../src/experiment/metrics.ts";
+import {
+  postFreezeLossSeries,
+  driftAttributableError,
+  postFreezeActionDivergenceCount,
+  postFreezeObservationDivergenceCount,
+} from "../../src/experiment/metrics.ts";
 import type { EpisodeStepRecord } from "../../src/experiment/freeze.ts";
 import { Action } from "../../src/env/types.ts";
 
 /** Minimal fabricated records — only `step`/`frozen`/`worldModelLoss` matter to metrics.ts. */
-function record(step: number, worldModelLoss: (number | undefined)[], actions: Action[] = [Action.Stay, Action.Stay]): EpisodeStepRecord {
+function record(
+  step: number,
+  worldModelLoss: (number | undefined)[],
+  actions: Action[] = [Action.Stay, Action.Stay],
+  nextObservations: number[][] = [[], []],
+): EpisodeStepRecord {
   return {
     step,
     observations: [[], []],
-    nextObservations: [[], []],
+    nextObservations,
     actions,
     reward: 0,
     done: false,
@@ -92,4 +102,61 @@ test("postFreezeActionDivergenceCount: throws on post-freeze step-count mismatch
   const control = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0]), record(3, [1.0, 1.0])];
   const intervention = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0])];
   assert.throws(() => postFreezeActionDivergenceCount(control, intervention, 1), /control has 3 post-freeze steps, intervention has 2/);
+});
+
+test("postFreezeObservationDivergenceCount: counts post-freeze steps where agentIndex's nextObservation differs", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [[0, 0], [0, 0]]),
+    record(2, [1.0, 1.0], undefined, [[0.1, 0], [0, 0]]),
+    record(3, [1.0, 1.0], undefined, [[0.1, 0.2], [0, 0]]),
+    record(4, [1.0, 1.0], undefined, [[0.1, 0.2], [0, 0]]),
+  ];
+  const intervention = [
+    record(1, [1.0, 1.0], undefined, [[0, 0], [0, 0]]),
+    record(2, [1.0, 1.0], undefined, [[0.1, 0], [0, 0]]),
+    record(3, [1.0, 1.0], undefined, [[0.3, 0.2], [0, 0]]),
+    record(4, [1.0, 1.0], undefined, [[0.1, 0.5], [0, 0]]),
+  ];
+  assert.deepEqual(postFreezeObservationDivergenceCount(control, intervention, 2, 0), {
+    postFreezeSteps: 3,
+    divergentSteps: 2,
+  });
+});
+
+test("postFreezeObservationDivergenceCount: only agentIndex's own observation is compared, not the other agent's", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [[0, 0], [1, 1]]),
+    record(2, [1.0, 1.0], undefined, [[0, 0], [2, 2]]),
+  ];
+  const intervention = [
+    record(1, [1.0, 1.0], undefined, [[0, 0], [9, 9]]),
+    record(2, [1.0, 1.0], undefined, [[0, 0], [8, 8]]),
+  ];
+  assert.deepEqual(postFreezeObservationDivergenceCount(control, intervention, 1, 0), {
+    postFreezeSteps: 2,
+    divergentSteps: 0,
+  });
+});
+
+test("postFreezeObservationDivergenceCount: zero divergent steps when every post-freeze observation matches", () => {
+  const control = [record(5, [1.0, 1.0], undefined, [[0.4, 0.4], [0, 0]])];
+  const intervention = [record(5, [1.0, 1.0], undefined, [[0.4, 0.4], [0, 0]])];
+  assert.deepEqual(postFreezeObservationDivergenceCount(control, intervention, 5, 0), {
+    postFreezeSteps: 1,
+    divergentSteps: 0,
+  });
+});
+
+test("postFreezeObservationDivergenceCount: throws when freezeStep never occurs in control's records", () => {
+  const records = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0])];
+  assert.throws(() => postFreezeObservationDivergenceCount(records, records, 5, 0), /freezeStep 5 never occurs/);
+});
+
+test("postFreezeObservationDivergenceCount: throws on post-freeze step-count mismatch rather than truncating", () => {
+  const control = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0]), record(3, [1.0, 1.0])];
+  const intervention = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0])];
+  assert.throws(
+    () => postFreezeObservationDivergenceCount(control, intervention, 1, 0),
+    /control has 3 post-freeze steps, intervention has 2/,
+  );
 });

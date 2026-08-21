@@ -478,3 +478,79 @@ Full detail, all findings, and the raw per-seed manifests + telemetry:
 `artifacts/2026-08-20-post-freeze-action-divergence/`.
 
 Full detail and the raw per-seed manifests: `artifacts/2026-08-13-paired-init-instrument-validation/`.
+
+**2026-08-21 update**: processing PR #47's review (@SakkarinKt, 2026-08-20 merge comment) —
+"Instrumenting the same 3 seeds per-agent: agent 0's own actions diverge 0/38 in all three
+seeds — every joint divergence is agent 1's. What the frozen agent's loss can see is its own
+observation, which differs on only 23/38 (1001), 3/38 (1002), 0/38 (1003)... land an agent-0
+observation-divergence (or partner-visibility) counter beside this one and re-read the same 3
+seeds." Added `postFreezeObservationDivergenceCount` (`src/experiment/metrics.ts`): per seed,
+counts post-freeze steps where a given agent's own `nextObservations` entry differs between
+control and intervention — the necessary condition for `postFreezeLossSeries` to have been able
+to diverge at that step at all, distinct from `postFreezeActionDivergenceCount` (which counts
+*joint* action differences and doesn't distinguish "the frozen agent's own view changed" from
+"only the partner's action changed while staying outside the frozen agent's `viewRadius`"). 5 new
+tests (`test/experiment/metrics.test.ts`). `npm test`: 109/109 (104 prior + 5 new). `npm run
+typecheck:ratchet`: in-repo count unchanged at 44, exit 0. Also fixed a doc-only issue the same
+review flagged: `driftAttributableError`'s JSDoc had ended up sitting above
+`postFreezeActionDivergenceCount` instead of its own function (PR #46/#47's incremental edits
+left it stranded) — moved back above `driftAttributableError`, and the new function's own JSDoc
+sits above it in turn.
+
+Re-ran the identical 3-seed paired-init validation —
+`experiments/2026-08-21-agent0-observation-divergence/run.ts`, same `SEEDS`/`FREEZE_STEP`/
+`FROZEN_AGENT_INDEX`/`HORIZON`/configs as 2026-08-13's/20's runs — adding only this new
+measurement for the frozen agent (index 0). `diffMean` reproduced 2026-08-13's/20's numbers
+bit-for-bit (`[−0.0936, +0.0036, +0.0000]`); `assertPreFreezeParity` again `identical: true` for
+all 3 seeds.
+
+| seed | diffMean | actions differing (post-freeze) | frozen agent's own observation differing (post-freeze) |
+| --- | --- | --- | --- |
+| 1001 | −0.0936 | 22 / 38 | 24 / 38 |
+| 1002 | +0.0036 | 22 / 38 | 3 / 38 |
+| 1003 | +0.0000 | 23 / 38 | 0 / 38 |
+
+**Result** (`self_checked, high confidence` on the counts — direct tally over this run's
+telemetry, not inferred; `medium confidence` on the interpretation). This confirms the review
+comment's read of what's going on, with one small numeric correction: this run measured 24/38 for
+seed 1001's frozen-agent observation divergence, not the 23/38 quoted in the PR #47 review comment
+(the review's number reads as an informal count made during code review, not a committed
+measurement — this run is the first time the number is a direct tally over telemetry, so 24/38 is
+what's reported here). The picture per seed:
+
+- **Seed 1003** (`diffMean` exactly 0): frozen agent's observation *never* differs post-freeze
+  (0/38), despite the partner's actions differing 23/38 of the time. Fully explained by
+  `relativeEntry`'s `viewRadius` gate (`src/env/gridworld.ts`): the partner never comes within
+  `viewRadius: 2` of the frozen agent for this seed's post-freeze trajectory, so the observation's
+  partner-visibility component stays `[0, 0, 0]` in both control and intervention regardless of
+  what the partner actually does. A `diffMean` of exactly 0 here isn't ambiguous once you look at
+  this metric — the frozen agent's world model had nothing to see differently, so a flat loss is
+  the *only* possible outcome, not evidence about whether the freeze mechanism works.
+- **Seed 1002** (`diffMean` ≈ 0, small positive slope): only 3/38 post-freeze steps give the
+  frozen agent a different observation at all — low but nonzero instrument power. `diffMean`
+  being small here is consistent with "the mechanism has almost nothing to respond to," not
+  necessarily "the mechanism doesn't work."
+- **Seed 1001** (`diffMean` clearly negative, the only seed showing a directional effect): the
+  frozen agent's observation differs on 24/38 steps — the highest observation-divergence count of
+  the three, and the only seed where the world-model loss also moved by a magnitude that reads as
+  more than noise. This is the seed where the instrument actually had something to detect *and*
+  detected something.
+
+Read together, `postFreezeObservationDivergenceCount` explains all three `diffMean` outcomes
+without needing a new hypothesis: **the frozen agent's loss can only diverge on steps where its
+own observation differs, and two of three seeds gave it almost no such steps** (0 and 3 out of
+38). This reframes the 2026-08-20 update's "the frozen agent's world-model loss just isn't
+tracking [action] divergence into a consistent signal" — the loss isn't failing to track
+something it could see; on 2 of 3 seeds it mostly couldn't see anything different in the first
+place, because the co-located, `viewRadius`-gated observation is a much narrower channel than raw
+joint-action divergence. `n=3` with only one seed landing enough visible steps to produce a
+directional read is not yet a demonstration that the instrument works at this horizon — it is
+consistent with "it works, but needs more visible post-freeze steps per seed to show up
+reliably." This is this stand-up's "Decisions needed" item: whether to pursue `viewRadius` (a
+cheaper knob, per the PR #47 review's own suggestion — larger `viewRadius` mechanically raises
+partner-visible-step counts without touching the horizon or freeze mechanism) or the
+multi-episode training-then-freeze horizon extension (PR #46's original "Next") as the next
+increment, given this update's read that visibility, not horizon, may be the current bottleneck.
+
+Full detail, all findings, and the raw per-seed manifests + telemetry:
+`artifacts/2026-08-21-agent0-observation-divergence/`.
