@@ -39,28 +39,6 @@ export function postFreezeLossSeries(
 }
 
 /**
- * Proposal 0001's primary metric: drift-attributable world-model prediction
- * error. The elementwise difference (frozen-agent post-freeze loss under the
- * freeze *intervention*, partner still training) minus (frozen-agent
- * post-freeze loss under the both-frozen *control*, per
- * `postFreezeLossSeries` above for each), aligned by steps-since-freeze
- * (array index — index 0 is each run's first post-freeze step), not by
- * absolute env step. `intervention` and `control` come from two separate
- * `runEpisode` calls (ordinarily different seeds, per the milestone's 3-seed
- * validation design), so their absolute step numbering only needs to agree
- * on `freezeStep`, not on matching env states past it — see
- * docs/explainers/0007-drift-attributable-error-metric.md for why this
- * alignment, not a raw per-episode trajectory pairing, is the correct
- * comparison, and for how this feeds the milestone's two-sided gate ((a)
- * control stays flat, (b) intervention rises measurably above it,
- * proposal 0001 "L2 promotion request").
- *
- * Requires equal-length inputs. A length mismatch means the two runs used a
- * different horizon or `freezeStep` — every element after the shorter run
- * ends would silently compare unrelated steps-since-freeze offsets, which is
- * a caller bug to surface, not a value to paper over by truncating.
- */
-/**
  * The instrument's power metric, per PR #46's review (@SakkarinKt, 2026-08-13): a per-seed count
  * of post-freeze steps at which `control` and `intervention` picked different joint actions,
  * aligned by steps-since-freeze (array index — index 0 is each run's first post-freeze step), not
@@ -112,6 +90,84 @@ export function postFreezeActionDivergenceCount(
   return { postFreezeSteps: c.length, divergentSteps };
 }
 
+/**
+ * A single agent's own observation-divergence count, per PR #47's review (@SakkarinKt,
+ * 2026-08-20 merge comment, "land an agent-0 observation-divergence (or partner-visibility)
+ * counter beside this one"): a per-seed count of post-freeze steps at which `agentIndex`'s
+ * post-step observation (`EpisodeStepRecord.nextObservations[agentIndex]` — the observation
+ * `WorldModel.step()` is actually evaluated against, per `runEpisode` in
+ * src/experiment/freeze.ts) differs between `control` and `intervention`, aligned by
+ * steps-since-freeze (array index), same convention as `postFreezeActionDivergenceCount` above.
+ *
+ * `postFreezeActionDivergenceCount` showed that a post-freeze action difference at some step
+ * doesn't imply the *frozen* agent's own loss could have seen anything different — a joint
+ * divergence driven entirely by the other agent's action, with `agentIndex` outside
+ * `viewRadius` (src/env/gridworld.ts's `relativeEntry`) of the partner both before and after,
+ * leaves `agentIndex`'s observation identical across control and intervention despite the
+ * actions differing. This metric isolates that: it's a necessary condition for
+ * `postFreezeLossSeries(records, freezeStep, agentIndex)` to differ between control and
+ * intervention at a given step — an agent whose observation never diverges has no post-freeze
+ * step at which its world-model loss *could* diverge, independent of whether its own actions
+ * ever diverged.
+ *
+ * Requires equal post-freeze step counts (same `freezeStep` and horizon in both runs) — surfaced
+ * as a thrown error rather than truncated, same rationale as `postFreezeActionDivergenceCount`.
+ */
+export function postFreezeObservationDivergenceCount(
+  control: EpisodeStepRecord[],
+  intervention: EpisodeStepRecord[],
+  freezeStep: number,
+  agentIndex: number,
+): { postFreezeSteps: number; divergentSteps: number } {
+  const postFreeze = (records: EpisodeStepRecord[]) => records.filter((record) => record.step >= freezeStep);
+  const c = postFreeze(control);
+  const i = postFreeze(intervention);
+  if (c.length !== i.length) {
+    throw new Error(
+      `control has ${c.length} post-freeze steps, intervention has ${i.length} — same freezeStep and horizon in both runs`,
+    );
+  }
+  if (c.length === 0) {
+    throw new Error(`freezeStep ${freezeStep} never occurs in control's records (episode horizon too short)`);
+  }
+
+  let divergentSteps = 0;
+  for (let idx = 0; idx < c.length; idx++) {
+    const cObs = c[idx]!.nextObservations[agentIndex];
+    const iObs = i[idx]!.nextObservations[agentIndex];
+    if (cObs === undefined || iObs === undefined) {
+      throw new Error(`nextObservations[${agentIndex}] is undefined at step-since-freeze ${idx}`);
+    }
+    if (JSON.stringify(cObs) !== JSON.stringify(iObs)) {
+      divergentSteps++;
+    }
+  }
+
+  return { postFreezeSteps: c.length, divergentSteps };
+}
+
+/**
+ * Proposal 0001's primary metric: drift-attributable world-model prediction
+ * error. The elementwise difference (frozen-agent post-freeze loss under the
+ * freeze *intervention*, partner still training) minus (frozen-agent
+ * post-freeze loss under the both-frozen *control*, per
+ * `postFreezeLossSeries` above for each), aligned by steps-since-freeze
+ * (array index — index 0 is each run's first post-freeze step), not by
+ * absolute env step. `intervention` and `control` come from two separate
+ * `runEpisode` calls (ordinarily different seeds, per the milestone's 3-seed
+ * validation design), so their absolute step numbering only needs to agree
+ * on `freezeStep`, not on matching env states past it — see
+ * docs/explainers/0007-drift-attributable-error-metric.md for why this
+ * alignment, not a raw per-episode trajectory pairing, is the correct
+ * comparison, and for how this feeds the milestone's two-sided gate ((a)
+ * control stays flat, (b) intervention rises measurably above it,
+ * proposal 0001 "L2 promotion request").
+ *
+ * Requires equal-length inputs. A length mismatch means the two runs used a
+ * different horizon or `freezeStep` — every element after the shorter run
+ * ends would silently compare unrelated steps-since-freeze offsets, which is
+ * a caller bug to surface, not a value to paper over by truncating.
+ */
 export function driftAttributableError(interventionLosses: number[], controlLosses: number[]): number[] {
   if (interventionLosses.length !== controlLosses.length) {
     throw new Error(
