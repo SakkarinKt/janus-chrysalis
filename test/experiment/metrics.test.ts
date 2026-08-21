@@ -1,16 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { postFreezeLossSeries, driftAttributableError } from "../../src/experiment/metrics.ts";
+import { postFreezeLossSeries, driftAttributableError, postFreezeActionDivergenceCount } from "../../src/experiment/metrics.ts";
 import type { EpisodeStepRecord } from "../../src/experiment/freeze.ts";
 import { Action } from "../../src/env/types.ts";
 
 /** Minimal fabricated records — only `step`/`frozen`/`worldModelLoss` matter to metrics.ts. */
-function record(step: number, worldModelLoss: (number | undefined)[]): EpisodeStepRecord {
+function record(step: number, worldModelLoss: (number | undefined)[], actions: Action[] = [Action.Stay, Action.Stay]): EpisodeStepRecord {
   return {
     step,
     observations: [[], []],
     nextObservations: [[], []],
-    actions: [Action.Stay, Action.Stay],
+    actions,
     reward: 0,
     done: false,
     frozen: [false, false],
@@ -53,4 +53,43 @@ test("driftAttributableError: control flat at the same level as intervention giv
 
 test("driftAttributableError: throws on length mismatch rather than truncating", () => {
   assert.throws(() => driftAttributableError([1, 2, 3], [1, 2]), /must be the same length/);
+});
+
+test("postFreezeActionDivergenceCount: counts post-freeze steps where actions differ, aligned by steps-since-freeze", () => {
+  const control = [
+    record(1, [1.0, 1.0], [Action.Stay, Action.Stay]),
+    record(2, [1.0, 1.0], [Action.Up, Action.Stay]),
+    record(3, [1.0, 1.0], [Action.Up, Action.Down]),
+    record(4, [1.0, 1.0], [Action.Left, Action.Right]),
+  ];
+  const intervention = [
+    record(1, [1.0, 1.0], [Action.Stay, Action.Stay]),
+    record(2, [1.0, 1.0], [Action.Up, Action.Stay]),
+    record(3, [1.0, 1.0], [Action.Down, Action.Down]),
+    record(4, [1.0, 1.0], [Action.Left, Action.Left]),
+  ];
+  assert.deepEqual(postFreezeActionDivergenceCount(control, intervention, 2), {
+    postFreezeSteps: 3,
+    divergentSteps: 2,
+  });
+});
+
+test("postFreezeActionDivergenceCount: zero divergent steps when every post-freeze action matches", () => {
+  const control = [record(5, [1.0, 1.0], [Action.Up, Action.Down]), record(6, [1.0, 1.0], [Action.Left, Action.Right])];
+  const intervention = [record(5, [1.0, 1.0], [Action.Up, Action.Down]), record(6, [1.0, 1.0], [Action.Left, Action.Right])];
+  assert.deepEqual(postFreezeActionDivergenceCount(control, intervention, 5), {
+    postFreezeSteps: 2,
+    divergentSteps: 0,
+  });
+});
+
+test("postFreezeActionDivergenceCount: throws when freezeStep never occurs in control's records", () => {
+  const records = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0])];
+  assert.throws(() => postFreezeActionDivergenceCount(records, records, 5), /freezeStep 5 never occurs/);
+});
+
+test("postFreezeActionDivergenceCount: throws on post-freeze step-count mismatch rather than truncating", () => {
+  const control = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0]), record(3, [1.0, 1.0])];
+  const intervention = [record(1, [1.0, 1.0]), record(2, [1.0, 1.0])];
+  assert.throws(() => postFreezeActionDivergenceCount(control, intervention, 1), /control has 3 post-freeze steps, intervention has 2/);
 });

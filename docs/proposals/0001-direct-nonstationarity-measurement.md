@@ -428,4 +428,53 @@ and "training" are behaviorally the same regardless of how clean the measurement
 that from "the mechanism doesn't work at all" still needs the longer-pre-freeze-horizon follow-up
 the 2026-08-12 update proposed (not attempted in this run — one increment).
 
+**2026-08-20 update**: processing PR #46's review (@SakkarinKt, 2026-08-13 merge comment, follow-up
+1 of 2 — "Record a per-seed count of post-freeze steps where the two conditions' actions differ,
+next to `preFreezeParityCheck`: that's the instrument's power metric... land the post-freeze
+divergence counter first, so the longer horizon arrives with a power read"). Added
+`postFreezeActionDivergenceCount` (`src/experiment/metrics.ts`): per seed, counts post-freeze
+steps (aligned by steps-since-freeze index, same convention as `driftAttributableError`) where
+control's and intervention's joint actions differ. 4 new tests
+(`test/experiment/metrics.test.ts`). `npm test`: 104/104 (100 prior + 4 new). `npm run
+typecheck:ratchet`: in-repo count unchanged at 44, exit 0.
+
+Re-ran the identical 3-seed paired-init validation —
+`experiments/2026-08-20-post-freeze-action-divergence/run.ts`, same `SEEDS`/`FREEZE_STEP`/
+`FROZEN_AGENT_INDEX`/`HORIZON`/configs as 2026-08-13's run — adding only this new measurement.
+`diffMean` reproduced 2026-08-13's numbers bit-for-bit (`[−0.0936, +0.0036, +0.0000]`), confirming
+the paired setup is still fully deterministic on this commit; `assertPreFreezeParity` again
+`identical: true` for all 3 seeds.
+
+| seed | diffMean | post-freeze steps with differing actions |
+| --- | --- | --- |
+| 1001 | −0.0936 | 22 / 38 |
+| 1002 | +0.0036 | 22 / 38 |
+| 1003 | +0.0000 | 23 / 38 |
+
+**Result: the power read changes the story** (`self_checked, high confidence` on the counts
+themselves — they're a direct tally over committed telemetry, not inferred; `medium confidence` on
+the interpretation below). Seed 1003's exactly-zero `diffMean` is **not** because the two
+conditions' post-freeze actions never diverged — the earlier 2026-08-13 standup's "agent 1's
+actions never diverged... for that trajectory" was a mistaken inference from the loss series alone
+(flagged at the time as read directly off equal telemetry, but "equal loss" does not imply "equal
+actions," and this run shows it didn't hold). All three seeds show substantial post-freeze action
+divergence — 58–61% of steps — which rules out this proposal's leading hypothesis from the
+2026-08-12/2026-08-13 updates ("37 pre-freeze steps is too little training, so post-freeze
+exploration keeps landing on already-converged/unseen keys and the two conditions rarely if ever
+pick different actions"): they picked different actions often. The instrument has power at this
+horizon; the frozen agent's world-model *loss* just isn't tracking that divergence into a
+consistent, rising, cross-seed signal. That reopens rather than closes the question the earlier
+hypothesis was trying to explain, and is a "Decisions needed" item in today's stand-up rather than
+something resolved here — worth the human's read before deciding what the multi-episode
+training-then-freeze follow-up (PR #46's "Next") should actually be designed to test now that
+"underpowered horizon" looks less likely than the earlier updates assumed.
+
+Not attempted in this run (PR #46's follow-up 2, explicitly "neither blocking"): the manifest
+`gitCommit` provenance-pointer gap (points to the commit this run started from, which won't
+contain this run's own `run.ts` — a pre-existing limitation of writing the manifest before the
+run's own commit exists, not introduced or worsened here).
+
+Full detail, all findings, and the raw per-seed manifests + telemetry:
+`artifacts/2026-08-20-post-freeze-action-divergence/`.
+
 Full detail and the raw per-seed manifests: `artifacts/2026-08-13-paired-init-instrument-validation/`.
