@@ -1,28 +1,34 @@
 /**
- * Processes PR #47's review (@SakkarinKt, 2026-08-20 merge comment): "Instrumenting the same 3
- * seeds per-agent: agent 0's own actions diverge 0/38 in all three seeds — every joint divergence
- * is agent 1's. What the frozen agent's loss can see is its own observation,
- * which differs on only 23/38 (1001), 3/38 (1002), 0/38 (1003)... land an agent-0
- * observation-divergence (or partner-visibility) counter beside this one and re-read the same 3
- * seeds." (PR #48 review, @SakkarinKt: this header previously had the agent indices swapped —
- * agent 0 is the frozen agent throughout this file, per `FROZEN_AGENT_INDEX` below.)
+ * Processes PR #48's review (@SakkarinKt, 2026-08-21 merge comment) "Next" line: "viewRadius on
+ * the same 3-seed paired-init harness — does raising visible-step counts raise |diffMean|; the
+ * multi-episode horizon extension stays queued behind it." This is also the answer to the
+ * 2026-08-21 stand-up's "Decisions needed" item (pursue `viewRadius` vs. the multi-episode
+ * horizon extension) — the human chose `viewRadius`.
  *
- *   node experiments/2026-08-21-agent0-observation-divergence/run.ts
+ *   node experiments/2026-08-22-viewradius-sweep/run.ts
  *
- * Re-runs the identical 3-seed paired-init Arm-A instrument validation
- * (`experiments/2026-08-20-post-freeze-action-divergence/run.ts` — same `SEEDS`, `FREEZE_STEP`,
- * `FROZEN_AGENT_INDEX`, `HORIZON`, `RSSM_CONFIG`, `Q_LEARNING_CONFIG`; paired
- * `WorldModelConfig.seed` per agent), adding one new measurement
- * (`postFreezeObservationDivergenceCount`, `src/experiment/metrics.ts`) for the frozen agent
- * (index `FROZEN_AGENT_INDEX`) on top, rather than re-deriving the already-confirmed pairing or
- * action-divergence results.
+ * Same 3-seed paired-init Arm-A instrument-validation harness as 2026-08-13's/20's/21's runs
+ * (identical `SEEDS`, `FREEZE_STEP`, `FROZEN_AGENT_INDEX`, `HORIZON`, `RSSM_CONFIG`,
+ * `Q_LEARNING_CONFIG`, paired `WorldModelConfig.seed` per agent, `buildWorldModels`,
+ * `assertPreFreezeParity`), with one new free variable: `CooperativeGridWorld`'s `viewRadius`
+ * (`src/env/types.ts`'s `GridWorldConfig.viewRadius`, default 2 — the value every prior run used
+ * implicitly). `observationLength` doesn't depend on `viewRadius` (only on `numLandmarks`,
+ * `src/env/gridworld.ts`'s `observationLength` getter), so `WorldModel`'s I/O shape is unaffected
+ * across the sweep — only what's *encoded* in the "other agent" slot changes (masked
+ * visible=0/dx=dy=0 vs. an actual relative offset).
  *
- * `postFreezeObservationDivergenceCount` counts, per seed, how many of the frozen agent's
- * post-freeze steps had its own `nextObservations` entry differ between control and
- * intervention — the necessary condition for `postFreezeLossSeries` to have been able to see
- * anything different at that step, independent of whether *some* agent's action diverged
- * (`postFreezeActionDivergenceCount`, which does not distinguish "the frozen agent's partner
- * moved but stayed invisible" from "the frozen agent's own view actually changed").
+ * `viewRadius` also gates the environment during the pre-freeze training window (steps 0-37), not
+ * only the post-freeze observation window measured by `postFreezeObservationDivergenceCount` — a
+ * larger `viewRadius` changes what both agents see and therefore how their Q-tables end up shaped
+ * by step 38, not just how visible the partner is afterward. `diffMean` and the divergence counts
+ * below are read as one joint measurement of "does a wider view radius change this instrument's
+ * output," not as an isolated post-freeze-only manipulation.
+ *
+ * VIEW_RADII: 2 (baseline — every prior run's implicit value, included here for a same-run,
+ * same-commit comparison point rather than citing 2026-08-21's numbers out of context), 4
+ * (doubles the baseline), 8 (grid is 8x8, `gridSize: 8` in DEFAULT_CONFIG — a radius equal to the
+ * grid side covers most of the board from any position, though corner-to-corner Manhattan
+ * distance can reach 14).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -43,11 +49,12 @@ import {
   postFreezeLossSeries,
 } from "../../src/experiment/metrics.ts";
 
-const RUN_ID = "2026-08-21-agent0-observation-divergence";
+const RUN_ID = "2026-08-22-viewradius-sweep";
 const SEEDS = [1001, 1002, 1003];
 const FREEZE_STEP = 38;
 const FROZEN_AGENT_INDEX = 0;
-const HORIZON = 75; // Matches 2026-08-12's/13's/20's runs.
+const HORIZON = 75; // Matches 2026-08-12's/13's/20's/21's runs.
+const VIEW_RADII = [2, 4, 8];
 
 const RSSM_CONFIG = { deterministicSize: 256, latentCategoricals: 8, latentClasses: 4 };
 const Q_LEARNING_CONFIG: Required<QLearningConfig> = { alpha: 0.1, gamma: 0.95, epsilon: 0.1 };
@@ -56,6 +63,7 @@ const artifactsDir = fileURLToPath(new URL(`../../artifacts/${RUN_ID}/`, import.
 const gitCommit = execSync("git rev-parse HEAD").toString().trim();
 
 interface RunOutcome {
+  viewRadius: number;
   seed: number;
   condition: FreezeCondition;
   postFreezeSteps: number;
@@ -82,7 +90,7 @@ function slope(values: number[]): number {
   return den === 0 ? 0 : num / den;
 }
 
-/** Same pairing as 2026-08-13's/20's `buildWorldModels` — one seed stream per agent index. */
+/** Same pairing as 2026-08-13's/20's/21's `buildWorldModels` — one seed stream per agent index. */
 function buildWorldModels(seed: number, observationSize: number): [WorldModel, WorldModel] {
   const configFor = (agentIndex: number): WorldModelConfig => ({
     rssm: RSSM_CONFIG,
@@ -92,7 +100,7 @@ function buildWorldModels(seed: number, observationSize: number): [WorldModel, W
   return [new WorldModel(configFor(0)), new WorldModel(configFor(1))];
 }
 
-/** Same diagnostic as 2026-08-13's/20's run — confirms pairing still holds on this commit before spending the run. */
+/** Same diagnostic as prior runs — confirms pairing still holds on this commit before spending the run. */
 function assertPreFreezeParity(control: EpisodeStepRecord[], intervention: EpisodeStepRecord[]): Record<string, unknown> {
   const preFreeze = (records: EpisodeStepRecord[]) => records.filter((r) => r.step < FREEZE_STEP);
   const c = preFreeze(control);
@@ -123,6 +131,7 @@ function assertPreFreezeParity(control: EpisodeStepRecord[], intervention: Episo
 }
 
 function writeRun(
+  viewRadius: number,
   seed: number,
   condition: FreezeCondition,
   records: EpisodeStepRecord[],
@@ -131,13 +140,14 @@ function writeRun(
   actionDivergence: { postFreezeSteps: number; divergentSteps: number },
   observationDivergence: { postFreezeSteps: number; divergentSteps: number },
 ): RunOutcome {
-  const dir = `${artifactsDir}seed-${seed}-${condition}/`;
+  const dir = `${artifactsDir}viewradius-${viewRadius}-seed-${seed}-${condition}/`;
   mkdirSync(dir, { recursive: true });
 
   const telemetry = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
   writeFileSync(`${dir}telemetry.jsonl`, telemetry);
 
   const outcome: RunOutcome = {
+    viewRadius,
     seed,
     condition,
     postFreezeSteps: series.length,
@@ -147,6 +157,7 @@ function writeRun(
 
   const manifest = {
     runId: RUN_ID,
+    viewRadius,
     seed,
     condition,
     frozenAgentIndex: condition === "intervention" ? FROZEN_AGENT_INDEX : null,
@@ -183,9 +194,9 @@ function writeRun(
         confidence: "self_checked, high confidence",
         summary:
           `Post-freeze observation-divergence count for the frozen agent (index ${FROZEN_AGENT_INDEX}), ` +
-          "PR #47 review follow-up (2026-08-20): of this seed's post-freeze steps, how many had the " +
-          "frozen agent's own nextObservations differ between control and intervention. This is the " +
-          "necessary condition for postFreezeLossSeries to have been able to differ at that step.",
+          `at viewRadius=${viewRadius} (PR #48 review "Next", 2026-08-22): of this seed's ` +
+          "post-freeze steps, how many had the frozen agent's own nextObservations differ between " +
+          "control and intervention.",
         postFreezeObservationDivergenceCount: observationDivergence,
       },
     ],
@@ -196,11 +207,12 @@ function writeRun(
 }
 
 function runOneCondition(
+  viewRadius: number,
   seed: number,
   condition: FreezeCondition,
   observationSize: number,
 ): { outcome: RunOutcome; series: number[]; records: EpisodeStepRecord[] } {
-  const env = new CooperativeGridWorld({ seed, horizon: HORIZON });
+  const env = new CooperativeGridWorld({ seed, horizon: HORIZON, viewRadius });
   const policies = [new QLearningPolicy(Q_LEARNING_CONFIG), new QLearningPolicy(Q_LEARNING_CONFIG)];
   const [wm0, wm1] = buildWorldModels(seed, observationSize);
 
@@ -215,7 +227,11 @@ function runOneCondition(
   wm0.dispose();
   wm1.dispose();
 
-  return { outcome: { seed, condition, postFreezeSteps: series.length, meanLoss: mean(series), slopeLoss: slope(series) }, series, records };
+  return {
+    outcome: { viewRadius, seed, condition, postFreezeSteps: series.length, meanLoss: mean(series), slopeLoss: slope(series) },
+    series,
+    records,
+  };
 }
 
 function main(): void {
@@ -224,79 +240,90 @@ function main(): void {
   const observationSize = probeEnv.observationLength;
 
   const rows: RunOutcome[] = [];
-  const diffs: { seed: number; diffMean: number; diffSlope: number }[] = [];
-  const divergences: {
+  const sweepRows: {
+    viewRadius: number;
     seed: number;
-    actionPostFreezeSteps: number;
+    diffMean: number;
+    diffSlope: number;
     actionDivergentSteps: number;
-    observationPostFreezeSteps: number;
+    actionPostFreezeSteps: number;
     observationDivergentSteps: number;
+    observationPostFreezeSteps: number;
   }[] = [];
 
-  for (const seed of SEEDS) {
-    const control = runOneCondition(seed, "control", observationSize);
-    const intervention = runOneCondition(seed, "intervention", observationSize);
+  for (const viewRadius of VIEW_RADII) {
+    for (const seed of SEEDS) {
+      const control = runOneCondition(viewRadius, seed, "control", observationSize);
+      const intervention = runOneCondition(viewRadius, seed, "intervention", observationSize);
 
-    const parityCheck = assertPreFreezeParity(control.records, intervention.records);
-    if (!parityCheck.identical) {
-      console.warn(`seed ${seed}: pre-freeze parity check FAILED —`, JSON.stringify(parityCheck));
+      const parityCheck = assertPreFreezeParity(control.records, intervention.records);
+      if (!parityCheck.identical) {
+        console.warn(`viewRadius ${viewRadius}, seed ${seed}: pre-freeze parity check FAILED —`, JSON.stringify(parityCheck));
+      }
+
+      const actionDivergence = postFreezeActionDivergenceCount(control.records, intervention.records, FREEZE_STEP);
+      const observationDivergence = postFreezeObservationDivergenceCount(
+        control.records,
+        intervention.records,
+        FREEZE_STEP,
+        FROZEN_AGENT_INDEX,
+      );
+
+      rows.push(
+        writeRun(viewRadius, seed, "control", control.records, control.series, parityCheck, actionDivergence, observationDivergence),
+        writeRun(viewRadius, seed, "intervention", intervention.records, intervention.series, parityCheck, actionDivergence, observationDivergence),
+      );
+
+      const diff = driftAttributableError(intervention.series, control.series);
+      const diffMean = mean(diff);
+      const diffSlope = slope(diff);
+      sweepRows.push({
+        viewRadius,
+        seed,
+        diffMean,
+        diffSlope,
+        actionDivergentSteps: actionDivergence.divergentSteps,
+        actionPostFreezeSteps: actionDivergence.postFreezeSteps,
+        observationDivergentSteps: observationDivergence.divergentSteps,
+        observationPostFreezeSteps: observationDivergence.postFreezeSteps,
+      });
+
+      console.log(
+        `viewRadius ${viewRadius}, seed ${seed}: diffMean=${diffMean.toFixed(4)} | ` +
+          `prefreezeParity=${parityCheck.identical} | ` +
+          `postFreezeActionDivergence=${actionDivergence.divergentSteps}/${actionDivergence.postFreezeSteps} | ` +
+          `frozenAgentObservationDivergence=${observationDivergence.divergentSteps}/${observationDivergence.postFreezeSteps}`,
+      );
     }
-
-    const actionDivergence = postFreezeActionDivergenceCount(control.records, intervention.records, FREEZE_STEP);
-    const observationDivergence = postFreezeObservationDivergenceCount(
-      control.records,
-      intervention.records,
-      FREEZE_STEP,
-      FROZEN_AGENT_INDEX,
-    );
-    divergences.push({
-      seed,
-      actionPostFreezeSteps: actionDivergence.postFreezeSteps,
-      actionDivergentSteps: actionDivergence.divergentSteps,
-      observationPostFreezeSteps: observationDivergence.postFreezeSteps,
-      observationDivergentSteps: observationDivergence.divergentSteps,
-    });
-
-    rows.push(
-      writeRun(seed, "control", control.records, control.series, parityCheck, actionDivergence, observationDivergence),
-      writeRun(seed, "intervention", intervention.records, intervention.series, parityCheck, actionDivergence, observationDivergence),
-    );
-
-    const diff = driftAttributableError(intervention.series, control.series);
-    diffs.push({ seed, diffMean: mean(diff), diffSlope: slope(diff) });
-
-    console.log(
-      `seed ${seed}: diffMean=${mean(diff).toFixed(4)} | prefreezeParity=${parityCheck.identical} | ` +
-        `postFreezeActionDivergence=${actionDivergence.divergentSteps}/${actionDivergence.postFreezeSteps} | ` +
-        `frozenAgentObservationDivergence=${observationDivergence.divergentSteps}/${observationDivergence.postFreezeSteps}`,
-    );
   }
 
-  const csvHeader = "seed,condition,postFreezeSteps,meanLoss,slopeLoss\n";
+  const csvHeader = "viewRadius,seed,condition,postFreezeSteps,meanLoss,slopeLoss\n";
   const csvBody = rows
-    .map((r) => `${r.seed},${r.condition},${r.postFreezeSteps},${r.meanLoss},${r.slopeLoss}`)
+    .map((r) => `${r.viewRadius},${r.seed},${r.condition},${r.postFreezeSteps},${r.meanLoss},${r.slopeLoss}`)
     .join("\n");
   writeFileSync(`${artifactsDir}results.summary.csv`, csvHeader + csvBody + "\n");
 
-  const divergenceCsvHeader =
-    "seed,actionPostFreezeSteps,actionDivergentSteps,observationPostFreezeSteps,observationDivergentSteps\n";
-  const divergenceCsvBody = divergences
+  const sweepCsvHeader =
+    "viewRadius,seed,diffMean,diffSlope,actionDivergentSteps,actionPostFreezeSteps,observationDivergentSteps,observationPostFreezeSteps\n";
+  const sweepCsvBody = sweepRows
     .map(
-      (d) =>
-        `${d.seed},${d.actionPostFreezeSteps},${d.actionDivergentSteps},${d.observationPostFreezeSteps},${d.observationDivergentSteps}`,
+      (s) =>
+        `${s.viewRadius},${s.seed},${s.diffMean},${s.diffSlope},${s.actionDivergentSteps},${s.actionPostFreezeSteps},` +
+        `${s.observationDivergentSteps},${s.observationPostFreezeSteps}`,
     )
     .join("\n");
-  writeFileSync(`${artifactsDir}divergence.summary.csv`, divergenceCsvHeader + divergenceCsvBody + "\n");
+  writeFileSync(`${artifactsDir}sweep.summary.csv`, sweepCsvHeader + sweepCsvBody + "\n");
 
-  console.log("\n--- Post-freeze action- vs frozen-agent observation-divergence summary (n=3, descriptive) ---");
-  for (const d of divergences) {
+  console.log("\n--- viewRadius sweep summary (n=3 seeds per viewRadius, descriptive) ---");
+  for (const viewRadius of VIEW_RADII) {
+    const rowsAtRadius = sweepRows.filter((s) => s.viewRadius === viewRadius);
+    const meanAbsDiffMean = mean(rowsAtRadius.map((s) => Math.abs(s.diffMean)));
+    const meanObservationDivergence = mean(rowsAtRadius.map((s) => s.observationDivergentSteps));
     console.log(
-      `seed ${d.seed}: actions ${d.actionDivergentSteps}/${d.actionPostFreezeSteps}, ` +
-        `frozen-agent observations ${d.observationDivergentSteps}/${d.observationPostFreezeSteps}`,
+      `viewRadius ${viewRadius}: mean|diffMean|=${meanAbsDiffMean.toFixed(4)}, ` +
+        `mean frozen-agent observation-divergent steps=${meanObservationDivergence.toFixed(2)}/38`,
     );
   }
-  const diffMeans = diffs.map((d) => d.diffMean);
-  console.log(`\nper-seed diffMean for reference: ${diffMeans.map((d) => d.toFixed(4)).join(", ")}`);
 }
 
 main();

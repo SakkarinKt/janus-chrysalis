@@ -486,8 +486,11 @@ observation, which differs on only 23/38 (1001), 3/38 (1002), 0/38 (1003)... lan
 observation-divergence (or partner-visibility) counter beside this one and re-read the same 3
 seeds." Added `postFreezeObservationDivergenceCount` (`src/experiment/metrics.ts`): per seed,
 counts post-freeze steps where a given agent's own `nextObservations` entry differs between
-control and intervention — the necessary condition for `postFreezeLossSeries` to have been able
-to diverge at that step at all, distinct from `postFreezeActionDivergenceCount` (which counts
+control and intervention — necessary, at or before a given step, for `postFreezeLossSeries` to
+have been able to diverge at that step (not sufficient *per-step* on its own: `WorldModel`
+threads recurrent state across the rollout, so a divergence at step `s` can leave the loss
+differing at later steps even after observations resync — see the PR #48 review correction below),
+distinct from `postFreezeActionDivergenceCount` (which counts
 *joint* action differences and doesn't distinguish "the frozen agent's own view changed" from
 "only the partner's action changed while staying outside the frozen agent's `viewRadius`"). 5 new
 tests (`test/experiment/metrics.test.ts`). `npm test`: 109/109 (104 prior + 5 new). `npm run
@@ -537,12 +540,12 @@ what's reported here). The picture per seed:
   detected something.
 
 Read together, `postFreezeObservationDivergenceCount` explains all three `diffMean` outcomes
-without needing a new hypothesis: **the frozen agent's loss can only diverge on steps where its
-own observation differs, and two of three seeds gave it almost no such steps** (0 and 3 out of
-38). This reframes the 2026-08-20 update's "the frozen agent's world-model loss just isn't
-tracking [action] divergence into a consistent signal" — the loss isn't failing to track
-something it could see; on 2 of 3 seeds it mostly couldn't see anything different in the first
-place, because the co-located, `viewRadius`-gated observation is a much narrower channel than raw
+without needing a new hypothesis: **zero post-freeze observation divergence leaves the frozen
+agent's loss with nothing to diverge on, and two of three seeds gave it almost no visible steps**
+(0 and 3 out of 38). This reframes the 2026-08-20 update's "the frozen agent's world-model loss
+just isn't tracking [action] divergence into a consistent signal" — for seed 1003 specifically,
+the loss isn't failing to track something it could see; it couldn't see anything different at all,
+because the co-located, `viewRadius`-gated observation is a much narrower channel than raw
 joint-action divergence. `n=3` with only one seed landing enough visible steps to produce a
 directional read is not yet a demonstration that the instrument works at this horizon — it is
 consistent with "it works, but needs more visible post-freeze steps per seed to show up
@@ -552,5 +555,56 @@ partner-visible-step counts without touching the horizon or freeze mechanism) or
 multi-episode training-then-freeze horizon extension (PR #46's original "Next") as the next
 increment, given this update's read that visibility, not horizon, may be the current bottleneck.
 
+**Correction (PR #48 review, @SakkarinKt)**: an earlier draft of this paragraph overstated the
+per-step claim as "the frozen agent's loss can only diverge on steps where its own observation
+differs." That's too strong — `WorldModel` threads recurrent state across the rollout, so seed
+1001's loss actually differs on 31/38 post-freeze steps against only 24/38 observation-divergent
+ones: 7 steps have an identical observation in control vs. intervention but a different loss
+anyway, contaminated through carried-forward state from the first divergence (index 7). The
+per-step claim needed is "divergent at or before step t," not "divergent at step t." The aggregate
+claim this update actually rests on is unaffected: zero observation divergence across the *entire*
+post-freeze window (seed 1003) still implies zero loss divergence anywhere in that window, since
+there is no earlier step for state to carry contamination from. See `metrics.ts`'s
+`postFreezeObservationDivergenceCount` JSDoc for the corrected wording.
+
 Full detail, all findings, and the raw per-seed manifests + telemetry:
 `artifacts/2026-08-21-agent0-observation-divergence/`.
+
+**2026-08-22 update**: processing PR #48's review (@SakkarinKt, 2026-08-21 merge comment) "Next"
+line — "`viewRadius` on the same 3-seed paired-init harness — does raising visible-step counts
+raise `|diffMean|`" — which also answers the 2026-08-21 update's "Decisions needed" item (the
+human chose `viewRadius` over the multi-episode horizon extension). Ran
+`experiments/2026-08-22-viewradius-sweep/run.ts`: identical 3-seed paired-init harness (same
+`SEEDS`/`FREEZE_STEP`/`FROZEN_AGENT_INDEX`/`HORIZON`/`RSSM_CONFIG`/`Q_LEARNING_CONFIG`), sweeping
+`CooperativeGridWorld`'s `viewRadius` (default 2) over `[2, 4, 8]`. `observationLength` doesn't
+depend on `viewRadius` (only `numLandmarks`), so `WorldModel`'s I/O shape is unchanged across the
+sweep. All 9 (viewRadius × seed) pairs kept `assertPreFreezeParity` `identical: true`.
+
+| viewRadius | mean frozen-agent observation divergence (of 38) | mean `\|diffMean\|` |
+| --- | --- | --- |
+| 2 | 9.00 | 0.0324 |
+| 4 | 19.67 | 0.2040 |
+| 8 | 28.33 | 0.1068 |
+
+**Result** (`self_checked, high confidence` on the counts; `medium confidence` on the
+interpretation). The observation-divergence count rises monotonically with `viewRadius`, as
+mechanically expected — a wider view radius does make the frozen agent's own observation differ
+between control and intervention more often. `|diffMean|` does not rise monotonically: it goes up
+from `viewRadius` 2 to 4, then down from 4 to 8. Per-seed detail is noisier still — seed 1003's
+`diffMean` goes from exactly 0 (`viewRadius` 2, fully explained by zero observation divergence) to
++0.4162 (`viewRadius` 4, the sweep's single largest `|diffMean|`) to −0.0993 (`viewRadius` 8), a
+sign flip alongside the magnitude swing.
+
+This is very likely a confound in the sweep's own design, not evidence against the visibility
+hypothesis: `viewRadius` gates the environment during the pre-freeze training window (steps 0–37)
+as well as the post-freeze measurement window, so a larger `viewRadius` changes what both agents
+saw and how their Q-tables ended up shaped by step 38 — not only how visible the partner is
+afterward. The sweep as designed cannot separate "does more post-freeze visibility raise the
+signal" from "does a different pre-freeze training regime raise the signal," and `n=3` seeds per
+radius is too small on its own to distinguish a real non-monotonic effect from noise. Cleanly
+answering the review's question needs a post-freeze-only `viewRadius` manipulation (pre-freeze
+training identical across the sweep, `viewRadius` changed only from `freezeStep` onward) — not
+implemented here since it is a design change to the harness (a mid-episode config switch), not a
+same-run parameter sweep. Raised as this stand-up's "Decisions needed" item.
+
+Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-22-viewradius-sweep/`.
