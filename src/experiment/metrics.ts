@@ -104,11 +104,14 @@ export function postFreezeActionDivergenceCount(
  * divergence driven entirely by the other agent's action, with `agentIndex` outside
  * `viewRadius` (src/env/gridworld.ts's `relativeEntry`) of the partner both before and after,
  * leaves `agentIndex`'s observation identical across control and intervention despite the
- * actions differing. This metric isolates that: it's a necessary condition for
- * `postFreezeLossSeries(records, freezeStep, agentIndex)` to differ between control and
- * intervention at a given step — an agent whose observation never diverges has no post-freeze
- * step at which its world-model loss *could* diverge, independent of whether its own actions
- * ever diverged.
+ * actions differing. This metric isolates that — with one caveat, per the PR #48 review:
+ * `WorldModel` threads recurrent state across the rollout, so an observation divergence at step
+ * `s` can leave the loss diverging at steps after `s` even once observations resync (contaminated
+ * through carried-forward state), which means "divergent at step t" is *not* itself a necessary
+ * condition for `postFreezeLossSeries` to differ at step t — only "divergent at or before step t"
+ * is. The claim that survives per-step: an agent whose observation never diverges across the
+ * *entire* post-freeze window (`divergentSteps === 0`) has no step at which its world-model loss
+ * *could* diverge, independent of whether its own actions ever diverged.
  *
  * Requires equal post-freeze step counts (same `freezeStep` and horizon in both runs) — surfaced
  * as a thrown error rather than truncated, same rationale as `postFreezeActionDivergenceCount`.

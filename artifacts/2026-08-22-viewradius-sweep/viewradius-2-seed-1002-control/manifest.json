@@ -1,0 +1,63 @@
+{
+  "runId": "2026-08-22-viewradius-sweep",
+  "viewRadius": 2,
+  "seed": 1002,
+  "condition": "control",
+  "frozenAgentIndex": null,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "026428785058e4f9f911a7f61910c6df33e97a11",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-22T01:14:22.808Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "viewRadius": 2,
+    "seed": 1002,
+    "condition": "control",
+    "postFreezeSteps": 38,
+    "meanLoss": 3.198808927285044,
+    "slopeLoss": 0.07035753632781411
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "World-model init is seeded and paired across control/intervention for this seed (WorldModelConfig.seed, PR #46) — see preFreezeParityCheck.",
+      "preFreezeParityCheck": {
+        "claim": "every pre-freezeStep EpisodeStepRecord (actions, reward, observations, nextObservations, worldModelLoss) is bit-identical between control and intervention for the same seed",
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze action-divergence count (PR #46 review follow-up 1, 2026-08-13): of this seed's post-freeze steps, how many had control and intervention pick different joint actions.",
+      "postFreezeActionDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 22
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze observation-divergence count for the frozen agent (index 0), at viewRadius=2 (PR #48 review \"Next\", 2026-08-22): of this seed's post-freeze steps, how many had the frozen agent's own nextObservations differ between control and intervention.",
+      "postFreezeObservationDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 3
+      }
+    }
+  ]
+}
