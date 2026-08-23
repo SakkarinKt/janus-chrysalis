@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CooperativeGridWorld } from "../../src/env/gridworld.ts";
 import { Action } from "../../src/env/types.ts";
+import type { Position } from "../../src/env/types.ts";
 
 test("reset returns two fixed-length observations at step 0", () => {
   const env = new CooperativeGridWorld({ seed: 1 });
@@ -129,6 +130,26 @@ test("stepping past the horizon without reset throws", () => {
   env.step([Action.Stay, Action.Stay]);
   env.step([Action.Stay, Action.Stay]);
   assert.throws(() => env.step([Action.Stay, Action.Stay]));
+});
+
+test("setViewRadius: takes effect on the next step without resetting positions or currentStep", () => {
+  const env = new CooperativeGridWorld({ seed: 3, gridSize: 8, viewRadius: 1, numLandmarks: 0, horizon: 10 });
+  env.reset();
+  const [selfPos, otherPos] = env.getAgentPositions() as [Position, Position];
+  const manhattan = Math.abs(selfPos.x - otherPos.x) + Math.abs(selfPos.y - otherPos.y);
+
+  // Distance stays fixed (Stay/Stay) while viewRadius grows from below it to above it.
+  const before = env.step([Action.Stay, Action.Stay]);
+  const otherVisibleBefore = before.observations[0]![2];
+  assert.equal(otherVisibleBefore, manhattan <= 1 ? 1 : 0);
+
+  env.setViewRadius(manhattan + 1);
+  assert.deepEqual(env.getAgentPositions(), [selfPos, otherPos]);
+  assert.equal(env.config.viewRadius, manhattan + 1);
+
+  const after = env.step([Action.Stay, Action.Stay]);
+  assert.equal(after.step, 2);
+  assert.equal(after.observations[0]![2], 1, "other agent should now be visible at the widened radius");
 });
 
 test("wrong action-array length throws", () => {
