@@ -52,6 +52,18 @@ export class CooperativeGridWorld {
     return { observations: this.observe(), reward, done, step: this.currentStep };
   }
 
+  /**
+   * Mid-episode override for `config.viewRadius`, taking effect on every
+   * subsequent `step()`'s `relativeEntry` gate — for a post-freeze-only
+   * `viewRadius` manipulation (proposal 0001, PR #49 review follow-up,
+   * 2026-08-23) that keeps pre-freeze training identical across a sweep
+   * while varying only the post-freeze visibility window. Does not reset,
+   * or otherwise touch, agent/landmark positions or `currentStep`.
+   */
+  setViewRadius(viewRadius: number): void {
+    this.config.viewRadius = viewRadius;
+  }
+
   /** Defensive copy — for logging/replay/tests, not for mutating env state. */
   getAgentPositions(): Position[] {
     return this.agentPositions.map((p) => ({ ...p }));

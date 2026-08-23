@@ -1,4 +1,5 @@
 import type { EpisodeStepRecord } from "./freeze.ts";
+import type { Observation } from "../env/types.ts";
 
 /**
  * Extracts one agent's world-model loss at every post-freeze step ("steps
@@ -147,6 +148,71 @@ export function postFreezeObservationDivergenceCount(
   }
 
   return { postFreezeSteps: c.length, divergentSteps };
+}
+
+/**
+ * Per-seed count of post-freeze steps at which the partner is visible to
+ * `agentIndex` — the observation's otherAgent-visible flag (`relativeEntry`
+ * in src/env/gridworld.ts, always the third-from-last element of the flat
+ * `Observation` vector: `[..., otherAgent_visible, otherAgent_dx,
+ * otherAgent_dy]`, src/env/types.ts) — in *either* `control` or
+ * `intervention`. This is the denominator the PR #48/#49 reviews computed
+ * informally ("partner-visible steps") to read how much of the post-freeze
+ * window even offers `postFreezeObservationDivergenceCount` and
+ * `driftAttributableError` anything to detect, independent of whether
+ * control and intervention actually differ. Landed as its own metric per
+ * the PR #49 review (@SakkarinKt, 2026-08-22 merge comment): "landing the
+ * standalone visibility tally from #48 would have sharpened this."
+ *
+ * Union ("in either"), not intersection ("in both") or "in control alone":
+ * a step where the partner is visible under one condition but not the
+ * other is itself a step where `postFreezeObservationDivergenceCount` could
+ * register a difference, so the union is the right denominator for "how
+ * many steps had anything to see."
+ *
+ * Requires equal post-freeze step counts (same `freezeStep` and horizon in
+ * both runs) — surfaced as a thrown error rather than truncated, same
+ * rationale as `postFreezeActionDivergenceCount`.
+ */
+export function postFreezePartnerVisibleCount(
+  control: EpisodeStepRecord[],
+  intervention: EpisodeStepRecord[],
+  freezeStep: number,
+  agentIndex: number,
+): { postFreezeSteps: number; visibleSteps: number } {
+  const postFreeze = (records: EpisodeStepRecord[]) => records.filter((record) => record.step >= freezeStep);
+  const c = postFreeze(control);
+  const i = postFreeze(intervention);
+  if (c.length !== i.length) {
+    throw new Error(
+      `control has ${c.length} post-freeze steps, intervention has ${i.length} — same freezeStep and horizon in both runs`,
+    );
+  }
+  if (c.length === 0) {
+    throw new Error(`freezeStep ${freezeStep} never occurs in control's records (episode horizon too short)`);
+  }
+
+  const isPartnerVisible = (obs: Observation): boolean => {
+    const visibleFlag = obs[obs.length - 3];
+    if (visibleFlag === undefined) {
+      throw new Error(`observation too short (length ${obs.length}) to contain an otherAgent-visible flag`);
+    }
+    return visibleFlag === 1;
+  };
+
+  let visibleSteps = 0;
+  for (let idx = 0; idx < c.length; idx++) {
+    const cObs = c[idx]!.nextObservations[agentIndex];
+    const iObs = i[idx]!.nextObservations[agentIndex];
+    if (cObs === undefined || iObs === undefined) {
+      throw new Error(`nextObservations[${agentIndex}] is undefined at step-since-freeze ${idx}`);
+    }
+    if (isPartnerVisible(cObs) || isPartnerVisible(iObs)) {
+      visibleSteps++;
+    }
+  }
+
+  return { postFreezeSteps: c.length, visibleSteps };
 }
 
 /**

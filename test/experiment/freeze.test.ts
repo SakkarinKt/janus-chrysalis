@@ -125,6 +125,50 @@ test("runEpisode: each record's observations is the pre-step obs acted on, nextO
   }
 });
 
+test(
+  "runEpisode: postFreezeEnvMutation runs exactly once, right before the env.step() call whose " +
+    "result.step equals freezeStep — so that record's nextObservations already reflects the mutation",
+  () => {
+    const env = new CooperativeGridWorld({ seed: 11, horizon: 6, viewRadius: 1, numLandmarks: 0 });
+    // With numLandmarks: 0, observation layout is [selfX, selfY, otherVisible, otherDx, otherDy] —
+    // index 2 is the otherAgent-visible flag (see test/env/gridworld.test.ts's own comment).
+    const freezeConfig: FreezeConfig = { freezeStep: 4, condition: "control" };
+    let callCount = 0;
+
+    const records = runEpisode(
+      env,
+      [new RandomPolicy(), new RandomPolicy()],
+      11,
+      freezeConfig,
+      undefined,
+      (mutatedEnv) => {
+        callCount += 1;
+        mutatedEnv.setViewRadius(100);
+      },
+    );
+
+    assert.equal(callCount, 1);
+    assert.equal(env.config.viewRadius, 100);
+
+    // The full-board radius means the partner is visible in every record from step 4 onward, and
+    // (since the grid can't exceed 100 in Manhattan distance either) not necessarily before it —
+    // this only asserts the mutation's effect boundary, not any particular pre-mutation value.
+    for (const record of records) {
+      const otherVisible = record.nextObservations[0]![2];
+      if (record.step >= freezeConfig.freezeStep) {
+        assert.equal(otherVisible, 1, `expected partner visible at step ${record.step} (>= freezeStep)`);
+      }
+    }
+  },
+);
+
+test("runEpisode: without postFreezeEnvMutation, existing calls behave exactly as before (no-op)", () => {
+  const env = new CooperativeGridWorld({ seed: 12, horizon: 5 });
+  const freezeConfig: FreezeConfig = { freezeStep: 3, condition: "control" };
+  const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], 12, freezeConfig);
+  assert.equal(records.length, 5);
+});
+
 test("runEpisode: wrong number of policies throws", () => {
   const env = new CooperativeGridWorld({ seed: 5, horizon: 3 });
   assert.throws(() => runEpisode(env, [new RandomPolicy()], 5));

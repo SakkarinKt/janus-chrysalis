@@ -79,6 +79,19 @@ export interface EpisodeStepRecord {
  * `deriveSeed` (src/env/rng.ts) so a world model's sampling never shares a
  * stream with, or shifts, the policy-action draws (docs/explainers/0005-
  * world-model-rollout-wiring.md, Amendment 2026-08-09; PR #39 review follow-up 2).
+ *
+ * `postFreezeEnvMutation`, when given and `freezeConfig` is also given, is
+ * called exactly once with `env` — immediately before the `env.step()` call
+ * whose resulting `EpisodeStepRecord.step` will equal `freezeConfig.freezeStep`
+ * — so its effect is visible starting at that record's `nextObservations`
+ * (the first record `postFreezeObservationDivergenceCount` and friends treat
+ * as "post-freeze", `record.step >= freezeStep`), not one step late. Actions
+ * for that transition were already chosen from pre-mutation observations, so
+ * the mutation cannot affect action selection, only what the environment
+ * returns afterward — e.g. `env.setViewRadius()` (src/env/gridworld.ts) for a
+ * post-freeze-only visibility manipulation (proposal 0001, PR #49 review
+ * follow-up, 2026-08-23). No-op when omitted, so existing callers are
+ * unaffected.
  */
 export function runEpisode(
   env: CooperativeGridWorld,
@@ -86,6 +99,7 @@ export function runEpisode(
   seed: number,
   freezeConfig?: FreezeConfig,
   worldModels?: (WorldModel | undefined)[],
+  postFreezeEnvMutation?: (env: CooperativeGridWorld) => void,
 ): EpisodeStepRecord[] {
   if (policies.length !== NUM_AGENTS) {
     throw new Error(`Expected ${NUM_AGENTS} policies, got ${policies.length}`);
@@ -99,9 +113,19 @@ export function runEpisode(
   const records: EpisodeStepRecord[] = [];
   let observations = env.reset().observations;
   let done = false;
+  let mutationApplied = false;
 
   while (!done) {
     const actions = observations.map((obs, i) => policies[i].act(obs, policyRng)) as Action[];
+    if (
+      postFreezeEnvMutation &&
+      freezeConfig &&
+      !mutationApplied &&
+      records.length + 1 === freezeConfig.freezeStep
+    ) {
+      postFreezeEnvMutation(env);
+      mutationApplied = true;
+    }
     const result = env.step(actions);
     const frozen = observations.map((_, i) =>
       freezeConfig ? isFrozen(i, result.step, freezeConfig) : false,

@@ -608,3 +608,72 @@ implemented here since it is a design change to the harness (a mid-episode confi
 same-run parameter sweep. Raised as this stand-up's "Decisions needed" item.
 
 Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-22-viewradius-sweep/`.
+
+**2026-08-23 update**: processing PR #49's review (@SakkarinKt, 2026-08-22 merge comment) "Next"
+line — "(a) the post-freeze-only `viewRadius` switch, with the visibility tally landed alongside
+as its own column and radii chosen below the 38/38 ceiling." Two small interface additions landed
+first: `CooperativeGridWorld.setViewRadius()` (src/env/gridworld.ts) and `runEpisode`'s new
+optional `postFreezeEnvMutation` hook (src/experiment/freeze.ts), called exactly once immediately
+before the `env.step()` call whose result lands the `FREEZE_STEP` record, so every post-freeze
+record — including the first — already reflects the new radius; and
+`postFreezePartnerVisibleCount` (src/experiment/metrics.ts), the standalone visibility tally the
+PR #49 review asked for (union of control/intervention, matching the review's own manual 36/38 for
+seed 1001 at `viewRadius` 2). Ran
+`experiments/2026-08-23-post-freeze-viewradius-switch/run.ts`: same 3-seed paired-init harness,
+`viewRadius` fixed at 2 for every pre-freeze step across the whole sweep, switched only from
+`FREEZE_STEP` onward via the new hook. `VIEW_RADII = [2, 4, 6]` (2026-08-22's whole-episode sweep
+put radius 8 at a 38/38/38 partner-visible-step ceiling and radius 4 already at 38/34/11, so 6 was
+chosen as a midpoint expected to stay under that ceiling for most seeds — see caveat below).
+
+**Confound-fix check** (`self_checked, high confidence` — direct tally over this run's telemetry):
+every radius's control and intervention run reproduced `assertPreFreezeParity`'s usual
+`identical: true`, *and* — new this run — every non-baseline radius's pre-freeze records are
+bit-identical to the `viewRadius=2` baseline's pre-freeze records, same seed and condition (9/9
+cross-radius checks `identical: true`). Pre-freeze training is now provably unaffected by which
+post-freeze radius a run will use.
+
+| viewRadius | mean frozen-agent observation divergence (of 38) | mean partner-visible (of 38) | mean `\|diffMean\|` |
+| --- | --- | --- | --- |
+| 2 | 9.00 | 15.33 | 0.0324 |
+| 4 | 17.67 | 25.67 | 0.1799 |
+| 6 | 26.67 | 36.00 | 0.1514 |
+
+**Result** (`self_checked, high confidence` on the counts; `medium confidence` on the
+interpretation below). With the pre-freeze-training confound removed, `|diffMean|` *still* does
+not rise monotonically with post-freeze `viewRadius` (0.0324 → 0.1799 → 0.1514) — this rules out
+2026-08-22's leading hypothesis ("a wider `viewRadius` also reshapes pre-freeze training, which is
+what's driving the non-monotonicity") as the *whole* explanation, since that channel is now closed
+off by construction and the non-monotonicity persists anyway. Per-seed detail is, if anything,
+noisier than the whole-episode sweep: seed 1003's `diffMean` goes `0.0000` (radius 2, still fully
+explained by zero observation divergence) → `+0.4169` (radius 4) → `-0.4351` (radius 6) — a larger
+magnitude swing with a sign flip in the *opposite* direction from 2026-08-22's post-freeze-only-plus-confound
+run (`+0.4162` → `-0.0993`). Seed 1001 gives identical `diffMean` at radius 4 and 6
+(`-0.013825112267544395` to full float precision) — not a bug: this seed's partner-visible tally
+already reached 38/38 at radius 4, so its post-freeze trajectory's partner was never masked at
+either radius and `relativeEntry`'s output is bit-identical between them (src/env/gridworld.ts) —
+a useful internal sanity check that the harness behaves as designed at the visibility ceiling.
+
+**Caveat on "radii chosen below the ceiling"**: radius 6 did not stay clear of the ceiling for
+every seed as intended — seed 1001 reached 38/38 (same as at radius 4) and seed 1002 reached 37/38;
+only seed 1003 (33/38) left meaningful headroom. This wasn't visible until the tally existed for
+*this* (post-freeze-only) design, since the post-freeze partner-visible counts here don't match
+2026-08-22's whole-episode-sweep counts at the same nominal radius (different pre-freeze
+trajectories now land the agents in different relative positions by `FREEZE_STEP`). Recorded as an
+assumption, not silently corrected mid-run.
+
+With the confound closed off, the leading open question is whether the non-monotonicity and large
+per-seed swings are a real effect at this `n=3` or sampling noise — `n=3` was already flagged as
+too small to distinguish a real non-monotonic effect from noise in 2026-08-22's update, and this
+run's numbers are, if anything, more supportive of "noise" (larger swings, not smaller) than of a
+specific mechanism. One thing this run rules out as a source of that noise: `QLearningPolicy.act`
+(src/agent/policy.ts) draws its epsilon-greedy exploration from the same seeded `Rng` `runEpisode`
+threads through (`policyRng` in src/experiment/freeze.ts), not `Math.random` — so a rerun at a
+fixed seed and radius is bit-identical, not an independent draw; there is no within-seed
+stochasticity to average over. Raised as this stand-up's "Decisions needed" item: whether to spend
+the next increment on more *distinct* seeds at a fixed subset of these radii — the only way to add
+independent samples given the harness's determinism, now a clean test since the confound this same
+suggestion couldn't previously separate (2026-08-22 review) is closed — versus some other next
+increment from `loop/GOAL.md`'s priority list.
+
+Full detail, all findings, and the raw per-seed manifests:
+`artifacts/2026-08-23-post-freeze-viewradius-switch/`.

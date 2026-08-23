@@ -5,6 +5,7 @@ import {
   driftAttributableError,
   postFreezeActionDivergenceCount,
   postFreezeObservationDivergenceCount,
+  postFreezePartnerVisibleCount,
 } from "../../src/experiment/metrics.ts";
 import type { EpisodeStepRecord } from "../../src/experiment/freeze.ts";
 import { Action } from "../../src/env/types.ts";
@@ -159,4 +160,59 @@ test("postFreezeObservationDivergenceCount: throws on post-freeze step-count mis
     () => postFreezeObservationDivergenceCount(control, intervention, 1, 0),
     /control has 3 post-freeze steps, intervention has 2/,
   );
+});
+
+/** Otherwise-arbitrary vector whose last 3 elements are [otherAgent_visible, otherAgent_dx, otherAgent_dy]. */
+const obsWithVisibility = (visible: 0 | 1): number[] => [0, 0, visible, visible ? 0.1 : 0, visible ? 0.2 : 0];
+
+test("postFreezePartnerVisibleCount: counts a step visible when the partner is visible in either control or intervention", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []]), // neither visible
+    record(2, [1.0, 1.0], undefined, [obsWithVisibility(1), []]), // control only
+    record(3, [1.0, 1.0], undefined, [obsWithVisibility(0), []]), // intervention only
+    record(4, [1.0, 1.0], undefined, [obsWithVisibility(1), []]), // both visible
+  ];
+  const intervention = [
+    record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []]),
+    record(2, [1.0, 1.0], undefined, [obsWithVisibility(0), []]),
+    record(3, [1.0, 1.0], undefined, [obsWithVisibility(1), []]),
+    record(4, [1.0, 1.0], undefined, [obsWithVisibility(1), []]),
+  ];
+  assert.deepEqual(postFreezePartnerVisibleCount(control, intervention, 1, 0), {
+    postFreezeSteps: 4,
+    visibleSteps: 3,
+  });
+});
+
+test("postFreezePartnerVisibleCount: zero visible steps when the partner is masked in both conditions throughout", () => {
+  const control = [record(5, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
+  const intervention = [record(5, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
+  assert.deepEqual(postFreezePartnerVisibleCount(control, intervention, 5, 0), {
+    postFreezeSteps: 1,
+    visibleSteps: 0,
+  });
+});
+
+test("postFreezePartnerVisibleCount: throws when freezeStep never occurs in control's records", () => {
+  const records = [record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []]), record(2, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
+  assert.throws(() => postFreezePartnerVisibleCount(records, records, 5, 0), /freezeStep 5 never occurs/);
+});
+
+test("postFreezePartnerVisibleCount: throws on post-freeze step-count mismatch rather than truncating", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []]),
+    record(2, [1.0, 1.0], undefined, [obsWithVisibility(0), []]),
+    record(3, [1.0, 1.0], undefined, [obsWithVisibility(0), []]),
+  ];
+  const intervention = [record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []]), record(2, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
+  assert.throws(
+    () => postFreezePartnerVisibleCount(control, intervention, 1, 0),
+    /control has 3 post-freeze steps, intervention has 2/,
+  );
+});
+
+test("postFreezePartnerVisibleCount: throws when an observation is too short to contain a visibility flag", () => {
+  const control = [record(1, [1.0, 1.0], undefined, [[], []])];
+  const intervention = [record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
+  assert.throws(() => postFreezePartnerVisibleCount(control, intervention, 1, 0), /observation too short/);
 });
