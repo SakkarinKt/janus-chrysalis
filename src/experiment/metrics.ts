@@ -216,6 +216,73 @@ export function postFreezePartnerVisibleCount(
 }
 
 /**
+ * The landmark analogue of `postFreezePartnerVisibleCount` above, per the PR #50 review
+ * (@SakkarinKt, 2026-08-23 merge comment): "`viewRadius` gates landmarks too ... the sweep axis
+ * moves partner visibility and landmark observability together, and `postFreezePartnerVisibleCount`
+ * only tallies the partner half." Same union-over-control-and-intervention convention, but checks
+ * every landmark's visible flag rather than the partner's: a step counts as `visibleSteps` if
+ * *any* of `numLandmarks` landmarks is visible to `agentIndex` in `control` or `intervention` (see
+ * the flat `Observation` layout, src/env/types.ts: `[selfX, selfY, landmark_0_visible, ...,
+ * landmark_{numLandmarks-1}_visible, ..., otherAgent_visible, ...]` — each landmark's visible flag
+ * sits at index `2 + 3*k`).
+ *
+ * With `CooperativeGridWorld.setPartnerViewRadius()` (src/env/gridworld.ts, PR #50 review
+ * follow-up, 2026-08-24) decoupling the partner gate from the landmark gate, a run that only calls
+ * `setPartnerViewRadius()` post-freeze should see this tally track position drift alone, not the
+ * radius sweep directly — unlike `postFreezePartnerVisibleCount`, which is expected to respond to
+ * the swept radius by construction.
+ *
+ * Requires equal post-freeze step counts (same `freezeStep` and horizon in both runs) — surfaced
+ * as a thrown error rather than truncated, same rationale as `postFreezeActionDivergenceCount`.
+ */
+export function postFreezeLandmarkVisibleCount(
+  control: EpisodeStepRecord[],
+  intervention: EpisodeStepRecord[],
+  freezeStep: number,
+  agentIndex: number,
+  numLandmarks: number,
+): { postFreezeSteps: number; visibleSteps: number } {
+  const postFreeze = (records: EpisodeStepRecord[]) => records.filter((record) => record.step >= freezeStep);
+  const c = postFreeze(control);
+  const i = postFreeze(intervention);
+  if (c.length !== i.length) {
+    throw new Error(
+      `control has ${c.length} post-freeze steps, intervention has ${i.length} — same freezeStep and horizon in both runs`,
+    );
+  }
+  if (c.length === 0) {
+    throw new Error(`freezeStep ${freezeStep} never occurs in control's records (episode horizon too short)`);
+  }
+
+  const isAnyLandmarkVisible = (obs: Observation): boolean => {
+    for (let k = 0; k < numLandmarks; k++) {
+      const visibleFlag = obs[2 + k * 3];
+      if (visibleFlag === undefined) {
+        throw new Error(`observation too short (length ${obs.length}) to contain landmark ${k}'s visible flag`);
+      }
+      if (visibleFlag === 1) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  let visibleSteps = 0;
+  for (let idx = 0; idx < c.length; idx++) {
+    const cObs = c[idx]!.nextObservations[agentIndex];
+    const iObs = i[idx]!.nextObservations[agentIndex];
+    if (cObs === undefined || iObs === undefined) {
+      throw new Error(`nextObservations[${agentIndex}] is undefined at step-since-freeze ${idx}`);
+    }
+    if (isAnyLandmarkVisible(cObs) || isAnyLandmarkVisible(iObs)) {
+      visibleSteps++;
+    }
+  }
+
+  return { postFreezeSteps: c.length, visibleSteps };
+}
+
+/**
  * Proposal 0001's primary metric: drift-attributable world-model prediction
  * error. The elementwise difference (frozen-agent post-freeze loss under the
  * freeze *intervention*, partner still training) minus (frozen-agent

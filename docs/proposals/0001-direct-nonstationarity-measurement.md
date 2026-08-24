@@ -628,9 +628,11 @@ chosen as a midpoint expected to stay under that ceiling for most seeds — see 
 **Confound-fix check** (`self_checked, high confidence` — direct tally over this run's telemetry):
 every radius's control and intervention run reproduced `assertPreFreezeParity`'s usual
 `identical: true`, *and* — new this run — every non-baseline radius's pre-freeze records are
-bit-identical to the `viewRadius=2` baseline's pre-freeze records, same seed and condition (9/9
-cross-radius checks `identical: true`). Pre-freeze training is now provably unaffected by which
-post-freeze radius a run will use.
+bit-identical to the `viewRadius=2` baseline's pre-freeze records, same seed and condition (**12/12**
+cross-radius checks `identical: true` — 2 non-baseline radii × 3 seeds × 2 conditions each;
+corrected 2026-08-24 from an earlier "9/9" undercount here and in PR #50's body, per the PR #50
+review, @SakkarinKt, 2026-08-23 merge comment). Pre-freeze training is now provably unaffected by
+which post-freeze radius a run will use.
 
 | viewRadius | mean frozen-agent observation divergence (of 38) | mean partner-visible (of 38) | mean `\|diffMean\|` |
 | --- | --- | --- | --- |
@@ -677,3 +679,68 @@ increment from `loop/GOAL.md`'s priority list.
 
 Full detail, all findings, and the raw per-seed manifests:
 `artifacts/2026-08-23-post-freeze-viewradius-switch/`.
+
+**2026-08-24 update**: processing PR #50's review (@SakkarinKt, 2026-08-23 merge comment). Two
+things: fixed the "9/9" cross-radius-parity undercount above (see the correction inline, now
+12/12), and closed the confound the review actually flagged — `relativeEntry`'s `viewRadius` gate
+(src/env/gridworld.ts) also gates every landmark, not just the partner, so 2026-08-23's
+post-freeze-only switch moved partner visibility *and* landmark observability together
+(`numLandmarks: 2` by default); `postFreezePartnerVisibleCount` only tallied the partner half.
+
+`CooperativeGridWorld.setPartnerViewRadius()` (src/env/gridworld.ts) is new: it overrides only the
+partner's `relativeEntry` gate via a new `partnerViewRadiusOverride` field (exposed as the
+`partnerViewRadius` getter), leaving `config.viewRadius` — and therefore every landmark's gate —
+untouched. `observe()`'s landmark loop now calls `relativeEntry(self, landmark,
+this.config.viewRadius)` explicitly; the partner call uses `relativeEntry(self, other,
+this.partnerViewRadius)`. `postFreezeLandmarkVisibleCount` (src/experiment/metrics.ts) is the
+landmark analogue of `postFreezePartnerVisibleCount` the review asked for — same
+union-over-control-and-intervention convention, but "any of `numLandmarks` landmarks visible"
+instead of "partner visible."
+
+Ran `experiments/2026-08-24-partner-only-viewradius-switch/run.ts`: same 3-seed paired-init
+harness, `viewRadius` (the landmark gate) pinned at 2 for the *entire* episode this time — pre- and
+post-freeze alike, not just pre-freeze as in 2026-08-23's run — and `postFreezeEnvMutation` now
+calls `setPartnerViewRadius(viewRadius)` instead of `setViewRadius(viewRadius)`. Same
+`VIEW_RADII = [2, 4, 6]`.
+
+**Decoupling check** (`self_checked, high confidence` — direct tally over this run's telemetry):
+12/12 cross-radius pre-freeze parity checks `identical: true`, same as above (expected —
+`setPartnerViewRadius` still can't fire before `FREEZE_STEP`, same mechanism as before). New and
+more direct confirmation the landmark gate itself never moved: `postFreezeLandmarkVisibleCount` is
+*exactly* the same value across all three radii, for every seed (seed 1001: 0/38 at radius 2, 4,
+and 6; seed 1002: 19/38 at all three; seed 1003: 0/38 at all three) — landmark visibility didn't
+even drift through the indirect channel (post-freeze action divergence moving the frozen agent's
+position) that remained open in principle once the direct landmark-gate channel was closed. Whether
+that indirect channel is silent in general or just for these three seeds/this grid size is not
+established by n=3 — flagged as a caveat, not a general claim.
+
+| viewRadius (partner-only) | mean frozen-agent observation divergence (of 38) | mean partner-visible (of 38) | mean landmark-visible (of 38) | mean `\|diffMean\|` |
+| --- | --- | --- | --- | --- |
+| 2 | 9.00 | 15.33 | 6.33 | 0.0324 |
+| 4 | 18.33 | 25.33 | 6.33 | 0.1849 |
+| 6 | 27.67 | 35.33 | 6.33 | 0.1892 |
+
+**Result** (`self_checked, high confidence` on the counts; `medium confidence` on the
+interpretation). With the landmark confound closed too, `|diffMean|` now rises with partner
+`viewRadius` and roughly plateaus rather than dipping: 0.0324 → 0.1849 → 0.1892 (radius 4 → 6 is a
++0.0043 move, essentially flat, vs. 2026-08-23's confounded-landmark run's drop from 0.1799 to
+0.1514 over the same interval). That 2026-08-23 dip is not reproduced once the landmark channel is
+actually shut, which weakens (does not eliminate) the "pure `n=3` sampling noise" reading from
+2026-08-23 in favor of "landmark-driven noise was partly responsible for that particular dip" —
+still `medium confidence`, since per-seed swings remain large and one seed (1003) still flips sign
+across the sweep (`0.0000` → `+0.4271` → `-0.5103`, its largest-magnitude swing yet). Seed 1001's
+`diffMean` is again identical at radius 4 and 6 (`-0.013825112267544395`, bit-for-bit) — the same
+"partner-visible tally already at ceiling" explanation as 2026-08-23, now on the correct
+(partner-only) tally.
+
+**What this does and doesn't settle**: it rules landmark-gate confounding out as an explanation for
+2026-08-23's non-monotonicity, and the aggregate trend is now monotonic-ish. It does not resolve
+2026-08-23's still-open "Decisions needed" item — whether per-seed swings this large reflect a real
+mechanism or `n=3` sampling noise — since that question needs independent seeds, not another
+radius-axis rerun at the same three. Restating it here rather than re-opening it as new: spend the
+next increment on distinct seeds at a fixed radius (or radii) from this design, now that both
+confounds (pre-freeze training, landmark observability) are closed and any remaining
+non-monotonicity has nowhere left to hide behind.
+
+Full detail, all findings, and the raw per-seed manifests:
+`artifacts/2026-08-24-partner-only-viewradius-switch/`.

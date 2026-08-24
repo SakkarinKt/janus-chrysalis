@@ -152,6 +152,36 @@ test("setViewRadius: takes effect on the next step without resetting positions o
   assert.equal(after.observations[0]![2], 1, "other agent should now be visible at the widened radius");
 });
 
+test("setPartnerViewRadius: gates only the partner's visibility, leaving landmarks and config.viewRadius untouched", () => {
+  const env = new CooperativeGridWorld({ seed: 3, gridSize: 8, viewRadius: 1, numLandmarks: 1, horizon: 10 });
+  env.reset();
+  const [selfPos, otherPos] = env.getAgentPositions() as [Position, Position];
+  const [landmarkPos] = env.getLandmarkPositions() as [Position];
+  const manhattan = (a: Position, b: Position) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  const partnerDistance = manhattan(selfPos, otherPos);
+  const landmarkDistance = manhattan(selfPos, landmarkPos);
+
+  // Layout with numLandmarks: 1: [selfX, selfY, lm0_visible, lm0_dx, lm0_dy, other_visible, ...].
+  const before = env.step([Action.Stay, Action.Stay]);
+  assert.equal(before.observations[0]![2], landmarkDistance <= 1 ? 1 : 0);
+  assert.equal(before.observations[0]![5], partnerDistance <= 1 ? 1 : 0);
+
+  // Widen only the partner's radius — distances are unchanged (Stay/Stay), so a radius above the
+  // partner distance but landmark's gate (config.viewRadius, still 1) is untouched.
+  env.setPartnerViewRadius(partnerDistance + 1);
+  assert.equal(env.config.viewRadius, 1, "config.viewRadius (the landmark gate) must not move");
+  assert.equal(env.partnerViewRadius, partnerDistance + 1);
+
+  const after = env.step([Action.Stay, Action.Stay]);
+  assert.equal(after.step, 2);
+  assert.equal(
+    after.observations[0]![2],
+    landmarkDistance <= 1 ? 1 : 0,
+    "landmark visibility must be unaffected by setPartnerViewRadius",
+  );
+  assert.equal(after.observations[0]![5], 1, "partner should now be visible at the widened partner-only radius");
+});
+
 test("wrong action-array length throws", () => {
   const env = new CooperativeGridWorld({ seed: 10 });
   env.reset();
