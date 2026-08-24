@@ -1,0 +1,90 @@
+{
+  "runId": "2026-08-24-partner-only-viewradius-switch",
+  "viewRadius": 4,
+  "seed": 1002,
+  "condition": "control",
+  "frozenAgentIndex": null,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "8dd6e4b800df4b02c8eb453e2768a8c93eba936f",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-24T01:17:34.560Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "viewRadius": 4,
+    "seed": 1002,
+    "condition": "control",
+    "postFreezeSteps": 38,
+    "meanLoss": 3.392951017931888,
+    "slopeLoss": 0.06719246752244638
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "World-model init is seeded and paired across control/intervention for this seed (WorldModelConfig.seed, PR #46) — see preFreezeParityCheck.",
+      "preFreezeParityCheck": {
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze action-divergence count (PR #46 review follow-up 1, 2026-08-13): of this seed's post-freeze steps, how many had control and intervention pick different joint actions.",
+      "postFreezeActionDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 20
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze observation-divergence count for the frozen agent (index 0), at post-freeze partner-viewRadius=4 (PR #48 review \"Next\", 2026-08-22): of this seed's post-freeze steps, how many had the frozen agent's own nextObservations differ between control and intervention.",
+      "postFreezeObservationDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 18
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Partner-visible-step tally (PR #49 review, 2026-08-22, metrics.ts's postFreezePartnerVisibleCount): of this seed's post-freeze steps, how many had the partner visible to the frozen agent in control or intervention (union). This is the axis this run's setPartnerViewRadius() manipulation directly moves.",
+      "postFreezePartnerVisibleCount": {
+        "postFreezeSteps": 38,
+        "visibleSteps": 27
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Landmark-visible-step tally (PR #50 review, 2026-08-23, metrics.ts's postFreezeLandmarkVisibleCount, landed this run): of this seed's post-freeze steps, how many had any landmark visible to the frozen agent in control or intervention (union). With config.viewRadius pinned at the baseline for the whole episode, this should track position drift alone, not the swept radius directly.",
+      "postFreezeLandmarkVisibleCount": {
+        "postFreezeSteps": 38,
+        "visibleSteps": 19
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Cross-radius pre-freeze parity (2026-08-24, this run's decoupling check): this radius's control run's pre-freeze records vs. the viewRadius=2 baseline's control run, same seed — verifies the partner-only mutation left pre-freeze training untouched.",
+      "crossRadiusPreFreezeParityCheck": {
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    }
+  ]
+}

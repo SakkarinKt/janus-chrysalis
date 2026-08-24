@@ -14,6 +14,19 @@ export class CooperativeGridWorld {
   private agentPositions: Position[] = [];
   private landmarkPositions: Position[] = [];
   private currentStep = 0;
+  /**
+   * Independent override for the partner's `relativeEntry` gate, distinct
+   * from `config.viewRadius` (which alone still gates every landmark's
+   * `relativeEntry` call). `undefined` means "no override" — partner
+   * visibility falls back to `config.viewRadius`, matching every version of
+   * this class before `setPartnerViewRadius()` existed. Needed because
+   * `setViewRadius()` moved both gates together, confounding a partner-only
+   * visibility manipulation with a landmark-visibility change (proposal
+   * 0001, PR #50 review, 2026-08-23: "`viewRadius` gates landmarks too ...
+   * the sweep axis moves partner visibility and landmark observability
+   * together").
+   */
+  private partnerViewRadiusOverride: number | undefined = undefined;
 
   constructor(config: Partial<GridWorldConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -62,6 +75,24 @@ export class CooperativeGridWorld {
    */
   setViewRadius(viewRadius: number): void {
     this.config.viewRadius = viewRadius;
+  }
+
+  /**
+   * Mid-episode override for the partner's visibility gate only — every
+   * landmark's `relativeEntry` call keeps using `config.viewRadius`
+   * unaffected. Same call-once-before-`env.step()` usage as `setViewRadius`
+   * (see `runEpisode`'s `postFreezeEnvMutation`, src/experiment/freeze.ts),
+   * but decouples the partner-visibility manipulation from landmark
+   * observability (proposal 0001, PR #50 review follow-up, 2026-08-24).
+   */
+  setPartnerViewRadius(viewRadius: number): void {
+    this.partnerViewRadiusOverride = viewRadius;
+  }
+
+  /** Effective radius gating the partner's `relativeEntry` call — `config.viewRadius` unless
+   * `setPartnerViewRadius()` has overridden it for this instance. */
+  get partnerViewRadius(): number {
+    return this.partnerViewRadiusOverride ?? this.config.viewRadius;
   }
 
   /** Defensive copy — for logging/replay/tests, not for mutating env state. */
@@ -125,16 +156,16 @@ export class CooperativeGridWorld {
     return this.agentPositions.map((self, i) => {
       const vec: number[] = [self.x / this.config.gridSize, self.y / this.config.gridSize];
       for (const landmark of this.landmarkPositions) {
-        vec.push(...this.relativeEntry(self, landmark));
+        vec.push(...this.relativeEntry(self, landmark, this.config.viewRadius));
       }
       const other = this.agentPositions[1 - i];
-      vec.push(...this.relativeEntry(self, other));
+      vec.push(...this.relativeEntry(self, other, this.partnerViewRadius));
       return vec;
     });
   }
 
-  private relativeEntry(self: Position, other: Position): [number, number, number] {
-    if (this.distance(self, other) > this.config.viewRadius) {
+  private relativeEntry(self: Position, other: Position, viewRadius: number): [number, number, number] {
+    if (this.distance(self, other) > viewRadius) {
       return [0, 0, 0];
     }
     const { gridSize } = this.config;

@@ -6,6 +6,7 @@ import {
   postFreezeActionDivergenceCount,
   postFreezeObservationDivergenceCount,
   postFreezePartnerVisibleCount,
+  postFreezeLandmarkVisibleCount,
 } from "../../src/experiment/metrics.ts";
 import type { EpisodeStepRecord } from "../../src/experiment/freeze.ts";
 import { Action } from "../../src/env/types.ts";
@@ -215,4 +216,67 @@ test("postFreezePartnerVisibleCount: throws when an observation is too short to 
   const control = [record(1, [1.0, 1.0], undefined, [[], []])];
   const intervention = [record(1, [1.0, 1.0], undefined, [obsWithVisibility(0), []])];
   assert.throws(() => postFreezePartnerVisibleCount(control, intervention, 1, 0), /observation too short/);
+});
+
+/** Vector shaped [selfX, selfY, lm0_vis, lm0_dx, lm0_dy, lm1_vis, lm1_dx, lm1_dy], numLandmarks=2. */
+const obsWithLandmarkVisibility = (lm0: 0 | 1, lm1: 0 | 1): number[] => [
+  0,
+  0,
+  lm0,
+  lm0 ? 0.1 : 0,
+  lm0 ? 0.2 : 0,
+  lm1,
+  lm1 ? 0.3 : 0,
+  lm1 ? 0.4 : 0,
+];
+
+test("postFreezeLandmarkVisibleCount: counts a step visible when any landmark is visible in either control or intervention", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]), // neither visible, either run
+    record(2, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(1, 0), []]), // control's landmark 0 only
+    record(3, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]), // intervention's landmark 1 only
+    record(4, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(1, 1), []]), // both visible
+  ];
+  const intervention = [
+    record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]),
+    record(2, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]),
+    record(3, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 1), []]),
+    record(4, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(1, 1), []]),
+  ];
+  assert.deepEqual(postFreezeLandmarkVisibleCount(control, intervention, 1, 0, 2), {
+    postFreezeSteps: 4,
+    visibleSteps: 3,
+  });
+});
+
+test("postFreezeLandmarkVisibleCount: zero visible steps when every landmark is masked in both conditions throughout", () => {
+  const control = [record(5, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []])];
+  const intervention = [record(5, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []])];
+  assert.deepEqual(postFreezeLandmarkVisibleCount(control, intervention, 5, 0, 2), {
+    postFreezeSteps: 1,
+    visibleSteps: 0,
+  });
+});
+
+test("postFreezeLandmarkVisibleCount: throws when freezeStep never occurs in control's records", () => {
+  const records = [record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []])];
+  assert.throws(() => postFreezeLandmarkVisibleCount(records, records, 5, 0, 2), /freezeStep 5 never occurs/);
+});
+
+test("postFreezeLandmarkVisibleCount: throws on post-freeze step-count mismatch rather than truncating", () => {
+  const control = [
+    record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]),
+    record(2, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []]),
+  ];
+  const intervention = [record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []])];
+  assert.throws(
+    () => postFreezeLandmarkVisibleCount(control, intervention, 1, 0, 2),
+    /control has 2 post-freeze steps, intervention has 1/,
+  );
+});
+
+test("postFreezeLandmarkVisibleCount: throws when an observation is too short to contain a landmark's visibility flag", () => {
+  const control = [record(1, [1.0, 1.0], undefined, [[], []])];
+  const intervention = [record(1, [1.0, 1.0], undefined, [obsWithLandmarkVisibility(0, 0), []])];
+  assert.throws(() => postFreezeLandmarkVisibleCount(control, intervention, 1, 0, 2), /observation too short/);
 });
