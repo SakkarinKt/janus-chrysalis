@@ -40,6 +40,7 @@ export class CooperativeGridWorld {
   reset(): ResetResult {
     this.rng = new Rng(this.config.seed);
     this.currentStep = 0;
+    this.partnerViewRadiusOverride = undefined;
     const occupied = new Set<string>();
     this.agentPositions = Array.from({ length: NUM_AGENTS }, () => this.spawn(occupied));
     this.landmarkPositions = Array.from(
@@ -84,6 +85,9 @@ export class CooperativeGridWorld {
    * (see `runEpisode`'s `postFreezeEnvMutation`, src/experiment/freeze.ts),
    * but decouples the partner-visibility manipulation from landmark
    * observability (proposal 0001, PR #50 review follow-up, 2026-08-24).
+   * `reset()` clears the override (PR #51 review, 2026-08-25): it does not
+   * survive across episodes on a reused instance, unlike `setViewRadius`'s
+   * mutation of `config.viewRadius`, which does.
    */
   setPartnerViewRadius(viewRadius: number): void {
     this.partnerViewRadiusOverride = viewRadius;

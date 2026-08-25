@@ -182,6 +182,21 @@ test("setPartnerViewRadius: gates only the partner's visibility, leaving landmar
   assert.equal(after.observations[0]![5], 1, "partner should now be visible at the widened partner-only radius");
 });
 
+test("setPartnerViewRadius: override does not survive reset() on a reused instance", () => {
+  // PR #51 review, 2026-08-25: setPartnerViewRadius(6) then setViewRadius(4) left
+  // config.viewRadius=4, partnerViewRadius=6 — the override was stickier than intended and
+  // survived reset(). Latent in the 2026-08-24 run (which builds a fresh env per condition),
+  // but a real bug for any code reusing an instance across episodes.
+  const env = new CooperativeGridWorld({ seed: 3, gridSize: 8, viewRadius: 1, numLandmarks: 0, horizon: 10 });
+  env.reset();
+  env.setPartnerViewRadius(5);
+  assert.equal(env.partnerViewRadius, 5);
+
+  env.reset();
+  assert.equal(env.partnerViewRadius, env.config.viewRadius, "override must be cleared by reset()");
+  assert.equal(env.partnerViewRadius, 1);
+});
+
 test("wrong action-array length throws", () => {
   const env = new CooperativeGridWorld({ seed: 10 });
   env.reset();
