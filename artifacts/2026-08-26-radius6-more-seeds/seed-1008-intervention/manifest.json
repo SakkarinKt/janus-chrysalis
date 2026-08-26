@@ -1,0 +1,80 @@
+{
+  "runId": "2026-08-26-radius6-more-seeds",
+  "seed": 1008,
+  "condition": "intervention",
+  "partnerRadius": 6,
+  "landmarkRadius": 2,
+  "frozenAgentIndex": 0,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "gitCommit": "4f080d89dc578a7d6981ac3c54f9f88e37c3bbf2",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-08-26T00:44:58.684Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "seed": 1008,
+    "condition": "intervention",
+    "postFreezeSteps": 38,
+    "meanLoss": 1.9756721101309125,
+    "slopeLoss": -0.005802972831458933
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Pre-freeze parity between control and intervention for this seed.",
+      "preFreezeParityCheck": {
+        "preFreezeStepCount": 37,
+        "identical": true,
+        "mismatches": []
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze action-divergence count.",
+      "postFreezeActionDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 28
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Post-freeze observation-divergence count for the frozen agent (index 0).",
+      "postFreezeObservationDivergenceCount": {
+        "postFreezeSteps": 38,
+        "divergentSteps": 36
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Partner-visible-step tally (union over control/intervention).",
+      "postFreezePartnerVisibleCount": {
+        "postFreezeSteps": 38,
+        "visibleSteps": 38
+      }
+    },
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "Landmark-visible-step tally (union over control/intervention) — landmark gate pinned, expected constant.",
+      "postFreezeLandmarkVisibleCount": {
+        "postFreezeSteps": 38,
+        "visibleSteps": 1
+      }
+    }
+  ]
+}

@@ -783,17 +783,83 @@ rerunning them would reproduce identical numbers for no new information).
 | 1006 | +0.8542 | 2026-08-25 |
 
 **Result** (`self_checked, high confidence` on the numbers; `medium confidence` on the
-interpretation). n=6: mean(diffMean) = 0.0135, mean(|diffMean|) = 0.2712, stddev(diffMean) = 0.4109.
-Sign flips persist with double the seeds — three negative, three positive, spanning -0.5103 to
-+0.8542 — and the largest-magnitude swing to date (seed 1006, +0.8542) came from one of the *new*
-seeds, not 1003. The near-zero pooled mean alongside a stddev nearly 3x the mean magnitude reads as
-irreducible per-seed variance rather than a consistent directional effect at this scale — this
-favors, but does not prove, the "n=3 (now n=6) sampling noise" reading over a systematic
-partner-visibility mechanism: six seeds is still not enough to rule out a seed-dependent but
-non-monotonic *mechanism* (e.g., interacting with each seed's specific spawn geometry) that would
-also produce sign-inconsistent, high-variance output. Distinguishing those two stories would need
-either many more seeds (a scale beyond this run's remit) or a design that varies something about the
-per-seed geometry directly rather than averaging over it — raised as this stand-up's "Decisions
-needed" item.
+interpretation — interpretation corrected 2026-08-26 per the PR #52 review, @SakkarinKt: the
+original text below misread its own numbers in four places, all pointing toward an overstated
+"noise" reading). n=6: mean(diffMean) = 0.0135, mean(|diffMean|) = 0.2712, stddev(diffMean) = 0.4109
+(population; sample stddev, n-1, is 0.4501 — worth stating explicitly at n=6, where the two
+diverge by 10%).
+
+The sign split is **five negative, one positive** (1001 -0.0138, 1002 -0.0435, 1003 -0.5103, 1004
+-0.0813, 1005 -0.1242, 1006 +0.8542) — not three-and-three as originally stated; only seed 1006
+breaks a consistent negative trend. Stddev (0.4109) is not "nearly 3x" any mean cited here: it's
+~1.5x mean(|diffMean|) (0.2712) and ~30x the signed mean (0.0135) — no reading gives 3x. Seed 1006
+does not sit alongside four comparably-sized values; it **dominates** the spread: its squared
+deviation is 69.8% of the total sum of squares, seed 1003's is another 27.1%, and the remaining four
+seeds together account for ~3%. The near-zero pooled mean is accordingly an artifact of that one
+outlier (+0.8542) cancelling five same-signed negative values, not evidence of values scattering
+symmetrically around zero: drop seed 1006 and the remaining five average -0.155, all negative.
+
+None of this establishes a directional partner-visibility effect either — five same-signed values
+out of six is `p≈0.22` two-sided under a null of independent random signs, not a significant result
+— but the corrected picture reverses which way this run's data leans: not "noise, resolved toward
+zero," but "mostly one direction, with a single large outlier open at n=6." Distinguishing a real
+effect from a heavy-tailed noise process that just happens to produce one outlier this often would
+need more seeds at this same design, which is what the next increment does (2026-08-26 update,
+below) rather than the geometry-varying alternative floated here originally.
 
 Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-25-radius6-seed-spread/`.
+
+**2026-08-26 update**: processing PR #52's review (@SakkarinKt, posted as an issue comment after the
+PR had already merged — see that PR's comment thread). The review's "Decisions needed" answer: more
+seeds at radius 6, same design, because the corrected sign pattern above (five negative, one
+positive) now carries a prediction the geometry-varying alternative doesn't test — if the
+five-negative run is noise, more seeds should keep splitting the sign; if it's real, they should
+keep coming back negative with seed 1006 as the outlier.
+
+Ran `experiments/2026-08-26-radius6-more-seeds/run.ts`: three more seeds (1007, 1008, 1009), same
+decoupled partner-only `viewRadius=6` design, pooled with all six prior radius-6 rows for n=9. Also
+fixes the review's `diffSlope`-parsing nit (present in 2026-08-25's script but silently dropped for
+the rows it re-read; the historical CSV is left as committed, but the script and this run's pooling
+both parse it correctly now) and adds the review's requested partner-visible-saturation column.
+
+| seed | diffMean | partnerVisible/38 | saturated? | source |
+| --- | --- | --- | --- | --- |
+| 1001 | -0.0138 | 38/38 | yes | 2026-08-24 |
+| 1002 | -0.0435 | 35/38 | no | 2026-08-24 |
+| 1003 | -0.5103 | 33/38 | no | 2026-08-24 |
+| 1004 | -0.0813 | 38/38 | yes | 2026-08-25 |
+| 1005 | -0.1242 | 38/38 | yes | 2026-08-25 |
+| 1006 | +0.8542 | 28/38 | no | 2026-08-25 |
+| 1007 | -0.0453 | 38/38 | yes | 2026-08-26 |
+| 1008 | -0.7359 | 38/38 | yes | 2026-08-26 |
+| 1009 | -0.0195 | 38/38 | yes | 2026-08-26 |
+
+**Result** (`self_checked, high confidence` on the numbers; `medium confidence` on the
+interpretation). n=9: mean(diffMean) = -0.0800, mean(|diffMean|) = 0.2698, stddev(diffMean) = 0.4083
+(population) / 0.4331 (sample). Sign split is now **8 negative, 1 positive** — every new seed came
+back negative, same side as 5 of the prior 6. Under a null of independent random signs (`p=0.5`
+each), 8-or-more-extreme out of 9 has two-sided `p ≈ 0.039` (exact binomial) — nominally significant
+at the conventional 0.05 threshold, though this is one comparison among several this investigation
+has looked at (viewRadius sweep, landmark decoupling, now sign count), so that threshold should be
+read as suggestive, not confirmatory, without a pre-registered correction for the earlier looks.
+
+The review's "concrete lead" — whether large-|diffMean| seeds are exactly the ones whose
+partner-visible tally is off ceiling (unsaturated), which would point at a visibility-headroom
+mechanism rather than noise — **does not hold cleanly**: seed 1008 has the second-largest magnitude
+(-0.7359) and is fully saturated (38/38, same as five other seeds with small |diffMean|), while seed
+1006 (the one positive outlier, +0.8542) and seed 1003 (-0.5103) are both unsaturated. Saturation
+state does not separate the large-magnitude seeds from the small ones. This weakens (does not rule
+out) that specific mechanism; it doesn't identify a replacement one.
+
+**What this does and doesn't settle**: the sign-consistency finding is the strongest evidence to
+date for *some* real effect of partner-`viewRadius` on `|diffMean|`'s direction at this design, but
+`n=9` with one comparison crossing `p<0.05` is not a settled result, especially given the study's
+history of the "leading hypothesis" changing with each deconfounding step (pre-freeze-training
+confound, landmark-gate confound, now three separate misreadings of the same n=6 table). The
+visibility-saturation mechanism proposed as an explanation didn't survive its own check. Whether to
+(a) run more seeds at radius 6 to firm up the sign-consistency read, (b) run a matched set at a
+different radius (e.g. 4) to see whether the same sign-mostly-negative pattern holds off this one
+radius, or (c) move to a different `loop/GOAL.md` priority-list item now that this axis has an
+actual (if fragile) positive result to report — raised as this stand-up's "Decisions needed" item.
+
+Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-26-radius6-more-seeds/`.

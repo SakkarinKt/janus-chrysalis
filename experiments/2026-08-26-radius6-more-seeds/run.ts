@@ -1,26 +1,35 @@
 /**
- * Processes PR #51's review (@SakkarinKt, 2026-08-24 merge comment) "Next" line: distinct seeds,
- * not a priority pivot. 2026-08-23's and 2026-08-24's runs left an open question (2026-08-23's
- * "Decisions needed", restated 2026-08-24) — whether the large, sign-inconsistent per-seed
- * `diffMean` swings across the viewRadius sweep (seed 1003 in particular: 0.0000 -> +0.4271 ->
- * -0.5103) reflect a real mechanism or n=3 sampling noise, given the harness is fully
- * deterministic (QLearningPolicy.act draws from the seeded Rng runEpisode threads through, not
- * Math.random — no within-seed stochasticity to average over, so the only way to add independent
- * samples is more seeds). The review picked radius 6 specifically: "the axis with the largest
- * swings" (seed 1003's radius-6 diffMean, -0.5103, is the largest-magnitude value seen across any
- * run to date).
+ * Processes PR #52's review (@SakkarinKt, 2026-08-25 merge comment... actually posted after merge,
+ * as an issue comment on the closed PR). The review found the 2026-08-25 update's "n=6 favors
+ * noise" interpretation misread its own numbers in four places (sign split actually 5-negative/
+ * 1-positive, not 3/3; stddev is ~1.5x mean(|diffMean|) not "nearly 3x"; seed 1006 alone is 69.8%
+ * of the total variance, not "no seed dominating"; the near-zero pooled mean is an artifact of
+ * that one outlier cancelling five same-signed values). Those corrections are folded into
+ * `docs/proposals/0001-direct-nonstationarity-measurement.md`'s "2026-08-25 update" directly
+ * (dated 2026-08-26), not repeated here.
  *
- *   node experiments/2026-08-25-radius6-seed-spread/run.ts
+ * This run is the review's answer to the "Decisions needed" item: "more seeds at radius 6, same
+ * design — not the geometry pivot, not a priority move," because the corrected sign pattern now
+ * carries a prediction the geometry-varying alternative doesn't test — if the five-negative run is
+ * noise, more seeds should keep splitting the sign; if it's real, they should keep coming back
+ * negative with 1006 as the outlier.
  *
- * Runs three new seeds (1004, 1005, 1006) at partner-only viewRadius=6 only — same decoupled
- * design as 2026-08-24's run (landmark gate config.viewRadius pinned at 2 for the whole episode;
- * only the partner's post-freeze gate is set via setPartnerViewRadius(6)) — then pools their
- * diffMean with the three already-committed radius-6 rows from
- * artifacts/2026-08-24-partner-only-viewradius-switch/sweep.summary.csv (seeds 1001-1003) for an
- * n=6 spread on the one axis this question is about. Not a rerun of 1001-1003: those are read
- * verbatim from the prior run's committed CSV, not recomputed, since the harness is deterministic
- * and re-executing them would reproduce the identical numbers at the cost of a second manifest set
- * for no new information.
+ *   node experiments/2026-08-26-radius6-more-seeds/run.ts
+ *
+ * Three new seeds (1007, 1008, 1009), same decoupled partner-only viewRadius=6 design as
+ * 2026-08-24/25 (landmark gate pinned at 2 for the whole episode). Pools with all six prior
+ * radius-6 rows (1001-1003 from 2026-08-24, 1004-1006 from 2026-08-25) for n=9. Fixes the review's
+ * nit that 2026-08-25's `readPriorRadius6Rows` didn't parse the `diffSlope` column (present in the
+ * source CSV, just not read); this run's own pooling parses it correctly for every prior row.
+ *
+ * Also adds the review's requested column: partner-visible-step saturation
+ * (`partnerVisibleSteps`/`partnerVisiblePostFreezeSteps`). The review's "concrete lead" — seed 1006
+ * is the only new seed whose partner-visible tally is off ceiling (28/38, vs 1004's and 1005's
+ * 38/38) — is the same "already at ceiling" argument the proposal doc uses for seed 1001's
+ * identical radius-4/6 value; if large-|diffMean| seeds turn out to be exactly the unsaturated
+ * ones, that would point at a mechanism (visibility headroom) rather than pure noise. This run
+ * reports that column for every pooled seed so the pattern (or its absence) is visible without
+ * cross-referencing nine separate manifests.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -43,10 +52,10 @@ import {
   postFreezeLossSeries,
 } from "../../src/experiment/metrics.ts";
 
-const RUN_ID = "2026-08-25-radius6-seed-spread";
-const NEW_SEEDS = [1004, 1005, 1006];
+const RUN_ID = "2026-08-26-radius6-more-seeds";
+const NEW_SEEDS = [1007, 1008, 1009];
 const PARTNER_RADIUS = 6;
-const LANDMARK_RADIUS = 2; // Matches 2026-08-24's BASELINE_RADIUS — landmark gate pinned whole episode.
+const LANDMARK_RADIUS = 2; // Matches 2026-08-24's/25's BASELINE_RADIUS — landmark gate pinned whole episode.
 const FREEZE_STEP = 38;
 const FROZEN_AGENT_INDEX = 0;
 const HORIZON = 75; // Matches every prior Arm-A instrument-validation run.
@@ -55,9 +64,10 @@ const RSSM_CONFIG = { deterministicSize: 256, latentCategoricals: 8, latentClass
 const Q_LEARNING_CONFIG: Required<QLearningConfig> = { alpha: 0.1, gamma: 0.95, epsilon: 0.1 };
 
 const artifactsDir = fileURLToPath(new URL(`../../artifacts/${RUN_ID}/`, import.meta.url));
-const priorSweepCsvPath = fileURLToPath(
+const priorSweep0824CsvPath = fileURLToPath(
   new URL("../../artifacts/2026-08-24-partner-only-viewradius-switch/sweep.summary.csv", import.meta.url),
 );
+const prior0825Dir = fileURLToPath(new URL("../../artifacts/2026-08-25-radius6-seed-spread/", import.meta.url));
 const gitCommit = execSync("git rev-parse HEAD").toString().trim();
 
 interface RunOutcome {
@@ -68,13 +78,28 @@ interface RunOutcome {
   slopeLoss: number;
 }
 
+interface PooledRow {
+  seed: number;
+  diffMean: number;
+  diffSlope: number;
+  partnerVisibleSteps: number;
+  partnerVisiblePostFreezeSteps: number;
+  source: string;
+}
+
 function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function stddev(values: number[]): number {
+function stddevPopulation(values: number[]): number {
   const m = mean(values);
   return Math.sqrt(mean(values.map((v) => (v - m) ** 2)));
+}
+
+function stddevSample(values: number[]): number {
+  const m = mean(values);
+  const sumSquares = values.reduce((acc, v) => acc + (v - m) ** 2, 0);
+  return Math.sqrt(sumSquares / (values.length - 1));
 }
 
 /** OLS slope of `values` against their index (0, 1, 2, ...) — a coarse "is it rising" read. */
@@ -199,7 +224,7 @@ function writeRun(
       {
         severity: "NOTE",
         confidence: "self_checked, high confidence",
-        summary: "Landmark-visible-step tally (union over control/intervention) — landmark gate pinned, so this should be constant with 2026-08-24's same-seed value at other radii if this run's fix (reset() clearing partnerViewRadiusOverride, PR #51 review) changed nothing observable.",
+        summary: "Landmark-visible-step tally (union over control/intervention) — landmark gate pinned, expected constant.",
         postFreezeLandmarkVisibleCount: landmarkVisibility,
       },
     ],
@@ -238,35 +263,65 @@ function runOneCondition(
   };
 }
 
-interface PriorRow {
-  viewRadius: number;
-  seed: number;
-  diffMean: number;
-  diffSlope: number;
-}
-
-/** PR #52 review, 2026-08-26: this originally left `diffSlope` unparsed even though the source CSV
- * has it, so the pooled CSV wrote it blank for seeds 1001-1003. Fixed here for any future reader of
- * this script; the already-committed `pooled-radius6.summary.csv` predates the fix and is not
- * regenerated (see `experiments/2026-08-26-radius6-more-seeds/run.ts`, which reads the corrected
- * column list). */
-function readPriorRadius6Rows(): PriorRow[] {
-  const csv = readFileSync(priorSweepCsvPath, "utf8").trim().split("\n");
+/** Reads seeds 1001-1003's radius-6 rows from 2026-08-24's committed sweep CSV — that CSV has
+ * every column this run reports, unlike 2026-08-25's pooled CSV (which dropped diffSlope for these
+ * three rows, the review's nit; and never had partnerVisibleSteps at all). */
+function readPrior0824Rows(): PooledRow[] {
+  const csv = readFileSync(priorSweep0824CsvPath, "utf8").trim().split("\n");
   const header = csv[0]!.split(",");
-  const viewRadiusIdx = header.indexOf("viewRadius");
-  const seedIdx = header.indexOf("seed");
-  const diffMeanIdx = header.indexOf("diffMean");
-  const diffSlopeIdx = header.indexOf("diffSlope");
+  const col = (name: string) => header.indexOf(name);
+  const viewRadiusIdx = col("viewRadius");
+  const seedIdx = col("seed");
+  const diffMeanIdx = col("diffMean");
+  const diffSlopeIdx = col("diffSlope");
+  const partnerVisibleIdx = col("partnerVisibleSteps");
+  const partnerPostFreezeIdx = col("partnerVisiblePostFreezeSteps");
   return csv
     .slice(1)
     .map((line) => line.split(","))
     .filter((cols) => Number(cols[viewRadiusIdx]) === 6)
     .map((cols) => ({
-      viewRadius: 6,
       seed: Number(cols[seedIdx]),
       diffMean: Number(cols[diffMeanIdx]),
       diffSlope: Number(cols[diffSlopeIdx]),
+      partnerVisibleSteps: Number(cols[partnerVisibleIdx]),
+      partnerVisiblePostFreezeSteps: Number(cols[partnerPostFreezeIdx]),
+      source: "2026-08-24-partner-only-viewradius-switch",
     }));
+}
+
+/** Reads seeds 1004-1006's rows from 2026-08-25's own per-seed manifests (not its pooled CSV,
+ * which lacks partnerVisibleSteps) — diffMean/diffSlope from the pooled CSV (correct for these
+ * three; the parsing bug only affected the 1001-1003 rows it re-read from 2026-08-24), partner
+ * visibility from each seed's intervention manifest.json. */
+function readPrior0825Rows(): PooledRow[] {
+  const pooledCsv = readFileSync(`${prior0825Dir}pooled-radius6.summary.csv`, "utf8").trim().split("\n");
+  const header = pooledCsv[0]!.split(",");
+  const col = (name: string) => header.indexOf(name);
+  const seedIdx = col("seed");
+  const diffMeanIdx = col("diffMean");
+  const diffSlopeIdx = col("diffSlope");
+  const sourceIdx = col("source");
+
+  return pooledCsv
+    .slice(1)
+    .map((line) => line.split(","))
+    .filter((cols) => cols[sourceIdx] === "2026-08-25-radius6-seed-spread")
+    .map((cols) => {
+      const seed = Number(cols[seedIdx]);
+      const manifestPath = `${prior0825Dir}seed-${seed}-intervention/manifest.json`;
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      const partnerFinding = manifest.findings.find((f: { postFreezePartnerVisibleCount?: unknown }) => f.postFreezePartnerVisibleCount)!
+        .postFreezePartnerVisibleCount as { visibleSteps: number; postFreezeSteps: number };
+      return {
+        seed,
+        diffMean: Number(cols[diffMeanIdx]),
+        diffSlope: Number(cols[diffSlopeIdx]),
+        partnerVisibleSteps: partnerFinding.visibleSteps,
+        partnerVisiblePostFreezeSteps: partnerFinding.postFreezeSteps,
+        source: "2026-08-25-radius6-seed-spread",
+      };
+    });
 }
 
 function main(): void {
@@ -275,7 +330,7 @@ function main(): void {
   const observationSize = probeEnv.observationLength;
   const numLandmarks = probeEnv.config.numLandmarks;
 
-  const newRows: { seed: number; diffMean: number; diffSlope: number }[] = [];
+  const newRows: PooledRow[] = [];
 
   for (const seed of NEW_SEEDS) {
     const control = runOneCondition(seed, "control", observationSize);
@@ -308,32 +363,47 @@ function main(): void {
     const diff = driftAttributableError(intervention.series, control.series);
     const diffMean = mean(diff);
     const diffSlope = slope(diff);
-    newRows.push({ seed, diffMean, diffSlope });
+    newRows.push({
+      seed,
+      diffMean,
+      diffSlope,
+      partnerVisibleSteps: partnerVisibility.visibleSteps,
+      partnerVisiblePostFreezeSteps: partnerVisibility.postFreezeSteps,
+      source: RUN_ID,
+    });
 
     console.log(
       `seed ${seed}: diffMean=${diffMean.toFixed(4)} | prefreezeParity=${parityCheck.identical} | ` +
-        `partnerVisible=${partnerVisibility.visibleSteps}/${partnerVisibility.postFreezeSteps} | ` +
-        `landmarkVisible=${landmarkVisibility.visibleSteps}/${landmarkVisibility.postFreezeSteps}`,
+        `partnerVisible=${partnerVisibility.visibleSteps}/${partnerVisibility.postFreezeSteps}`,
     );
   }
 
-  const priorRows = readPriorRadius6Rows();
-  const pooled = [...priorRows.map((r) => ({ seed: r.seed, diffMean: r.diffMean })), ...newRows.map((r) => ({ seed: r.seed, diffMean: r.diffMean }))];
+  const pooled: PooledRow[] = [...readPrior0824Rows(), ...readPrior0825Rows(), ...newRows];
 
-  const csvHeader = "seed,diffMean,diffSlope,source\n";
-  const csvBody = [
-    ...priorRows.map((r) => `${r.seed},${r.diffMean},${r.diffSlope},2026-08-24-partner-only-viewradius-switch`),
-    ...newRows.map((r) => `${r.seed},${r.diffMean},${r.diffSlope},${RUN_ID}`),
-  ].join("\n");
+  const csvHeader = "seed,diffMean,diffSlope,partnerVisibleSteps,partnerVisiblePostFreezeSteps,source\n";
+  const csvBody = pooled
+    .map((r) => `${r.seed},${r.diffMean},${r.diffSlope},${r.partnerVisibleSteps},${r.partnerVisiblePostFreezeSteps},${r.source}`)
+    .join("\n");
   writeFileSync(`${artifactsDir}pooled-radius6.summary.csv`, csvHeader + csvBody + "\n");
 
-  console.log("\n--- radius=6 partner-only viewRadius, n=6 pooled seed spread (descriptive) ---");
+  const diffMeans = pooled.map((r) => r.diffMean);
+  console.log(`\n--- radius=6 partner-only viewRadius, n=${pooled.length} pooled seed spread (descriptive) ---`);
   console.log(`seeds: ${pooled.map((r) => r.seed).join(", ")}`);
-  console.log(`diffMean values: ${pooled.map((r) => r.diffMean.toFixed(4)).join(", ")}`);
-  console.log(`mean(diffMean) = ${mean(pooled.map((r) => r.diffMean)).toFixed(4)}`);
-  console.log(`mean(|diffMean|) = ${mean(pooled.map((r) => Math.abs(r.diffMean))).toFixed(4)}`);
-  console.log(`stddev(diffMean) = ${stddev(pooled.map((r) => r.diffMean)).toFixed(4)}`);
-  console.log(`sign flips present: ${pooled.some((r) => r.diffMean > 0) && pooled.some((r) => r.diffMean < 0)}`);
+  console.log(`diffMean values: ${diffMeans.map((v) => v.toFixed(4)).join(", ")}`);
+  console.log(`mean(diffMean) = ${mean(diffMeans).toFixed(4)}`);
+  console.log(`mean(|diffMean|) = ${mean(diffMeans.map(Math.abs)).toFixed(4)}`);
+  console.log(`stddev population(diffMean) = ${stddevPopulation(diffMeans).toFixed(4)}`);
+  console.log(`stddev sample(diffMean) = ${stddevSample(diffMeans).toFixed(4)}`);
+  const negCount = diffMeans.filter((v) => v < 0).length;
+  const posCount = diffMeans.filter((v) => v > 0).length;
+  console.log(`sign split: ${negCount} negative, ${posCount} positive`);
+  console.log("seed | diffMean | partnerVisible/postFreezeSteps | saturated (== postFreezeSteps)?");
+  for (const r of pooled) {
+    const saturated = r.partnerVisibleSteps === r.partnerVisiblePostFreezeSteps;
+    console.log(
+      `${r.seed} | ${r.diffMean.toFixed(4)} | ${r.partnerVisibleSteps}/${r.partnerVisiblePostFreezeSteps} | ${saturated}`,
+    );
+  }
 }
 
 main();
