@@ -703,16 +703,27 @@ post-freeze alike, not just pre-freeze as in 2026-08-23's run — and `postFreez
 calls `setPartnerViewRadius(viewRadius)` instead of `setViewRadius(viewRadius)`. Same
 `VIEW_RADII = [2, 4, 6]`.
 
-**Decoupling check** (`self_checked, high confidence` — direct tally over this run's telemetry):
-12/12 cross-radius pre-freeze parity checks `identical: true`, same as above (expected —
-`setPartnerViewRadius` still can't fire before `FREEZE_STEP`, same mechanism as before). New and
-more direct confirmation the landmark gate itself never moved: `postFreezeLandmarkVisibleCount` is
-*exactly* the same value across all three radii, for every seed (seed 1001: 0/38 at radius 2, 4,
-and 6; seed 1002: 19/38 at all three; seed 1003: 0/38 at all three) — landmark visibility didn't
-even drift through the indirect channel (post-freeze action divergence moving the frozen agent's
-position) that remained open in principle once the direct landmark-gate channel was closed. Whether
-that indirect channel is silent in general or just for these three seeds/this grid size is not
-established by n=3 — flagged as a caveat, not a general claim.
+**Decoupling check** (`self_checked, high confidence` — direct tally over this run's telemetry,
+corrected 2026-08-25 per the PR #51 review, @SakkarinKt, 2026-08-24 merge comment). Two checks ran,
+and they answer different questions — the PR #51 body's "verified two ways" overstated this by
+treating both as decoupling evidence:
+
+- 12/12 cross-radius pre-freeze parity checks `identical: true`, same as 2026-08-23. This is a
+  *timing guard*, not decoupling evidence: `postFreezeEnvMutation` fires at `FREEZE_STEP`, so this
+  check holds by construction regardless of whether the mutation is `setPartnerViewRadius` or the
+  (non-decoupled) `setViewRadius` — it would have passed under 2026-08-23's confounded run too. All
+  it confirms is that the mutation didn't leak into pre-freeze training.
+- `postFreezeLandmarkVisibleCount` is the actual decoupling evidence: exactly the same value across
+  all three radii, for every seed (seed 1001: 0/38 at radius 2, 4, and 6; seed 1002: 19/38 at all
+  three; seed 1003: 0/38 at all three). But seeds 1001 and 1003 are a 0-vs-0 comparison at every
+  radius — landmark visibility never fired for them regardless of radius, so their "identical"
+  result cannot distinguish "the gate never moved" from "nothing was ever visible to move." Only
+  seed 1002 (19/38, non-trivially constant across 2/4/6) actually exercises the gate and rules out
+  the indirect channel (post-freeze action divergence moving the frozen agent's position into or out
+  of landmark range) for that seed. Narrowed from the PR #51 body's "for these three seeds" to: this
+  run's decoupling evidence is a single seed's worth (1002), not three. Whether the indirect channel
+  is silent in general, for the other two seeds, or at other grid sizes is not established here —
+  flagged as a caveat, not a general claim.
 
 | viewRadius (partner-only) | mean frozen-agent observation divergence (of 38) | mean partner-visible (of 38) | mean landmark-visible (of 38) | mean `\|diffMean\|` |
 | --- | --- | --- | --- | --- |
@@ -744,3 +755,45 @@ non-monotonicity has nowhere left to hide behind.
 
 Full detail, all findings, and the raw per-seed manifests:
 `artifacts/2026-08-24-partner-only-viewradius-switch/`.
+
+**2026-08-25 update**: processing PR #51's review (@SakkarinKt, 2026-08-24 merge comment). Three
+things: two corrections to this doc (folded into the "Decoupling check" paragraph above — narrowing
+the landmark-gate-never-moved claim to seed 1002 alone, and clarifying that the 12/12 cross-radius
+pre-freeze-parity check is a timing guard, not decoupling evidence), a code fix
+(`CooperativeGridWorld.reset()` now clears `partnerViewRadiusOverride`; the review found
+`setPartnerViewRadius(6)` then `setViewRadius(4)` left `config.viewRadius=4, partnerViewRadius=6`
+stuck across a `reset()` — latent for every run to date, since each condition builds a fresh env,
+but a real bug for any code reusing an instance across episodes; `src/env/gridworld.ts`, covered by
+a new regression test in `test/env/gridworld.test.ts`), and the review's "Next": distinct seeds at
+radius 6, the axis with the largest swings.
+
+Ran `experiments/2026-08-25-radius6-seed-spread/run.ts`: three new seeds (1004, 1005, 1006), same
+decoupled partner-only viewRadius=6 design as 2026-08-24 (landmark gate pinned at 2 for the whole
+episode), pooled with 2026-08-24's already-committed radius-6 rows for seeds 1001-1003 (read
+verbatim from that run's `sweep.summary.csv`, not recomputed — the harness is deterministic, so
+rerunning them would reproduce identical numbers for no new information).
+
+| seed | diffMean | source |
+| --- | --- | --- |
+| 1001 | -0.0138 | 2026-08-24 |
+| 1002 | -0.0435 | 2026-08-24 |
+| 1003 | -0.5103 | 2026-08-24 |
+| 1004 | -0.0813 | 2026-08-25 |
+| 1005 | -0.1242 | 2026-08-25 |
+| 1006 | +0.8542 | 2026-08-25 |
+
+**Result** (`self_checked, high confidence` on the numbers; `medium confidence` on the
+interpretation). n=6: mean(diffMean) = 0.0135, mean(|diffMean|) = 0.2712, stddev(diffMean) = 0.4109.
+Sign flips persist with double the seeds — three negative, three positive, spanning -0.5103 to
++0.8542 — and the largest-magnitude swing to date (seed 1006, +0.8542) came from one of the *new*
+seeds, not 1003. The near-zero pooled mean alongside a stddev nearly 3x the mean magnitude reads as
+irreducible per-seed variance rather than a consistent directional effect at this scale — this
+favors, but does not prove, the "n=3 (now n=6) sampling noise" reading over a systematic
+partner-visibility mechanism: six seeds is still not enough to rule out a seed-dependent but
+non-monotonic *mechanism* (e.g., interacting with each seed's specific spawn geometry) that would
+also produce sign-inconsistent, high-variance output. Distinguishing those two stories would need
+either many more seeds (a scale beyond this run's remit) or a design that varies something about the
+per-seed geometry directly rather than averaging over it — raised as this stand-up's "Decisions
+needed" item.
+
+Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-25-radius6-seed-spread/`.
