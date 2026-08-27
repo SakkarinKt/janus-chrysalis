@@ -851,15 +851,80 @@ mechanism rather than noise — **does not hold cleanly**: seed 1008 has the sec
 state does not separate the large-magnitude seeds from the small ones. This weakens (does not rule
 out) that specific mechanism; it doesn't identify a replacement one.
 
-**What this does and doesn't settle**: the sign-consistency finding is the strongest evidence to
-date for *some* real effect of partner-`viewRadius` on `|diffMean|`'s direction at this design, but
-`n=9` with one comparison crossing `p<0.05` is not a settled result, especially given the study's
-history of the "leading hypothesis" changing with each deconfounding step (pre-freeze-training
-confound, landmark-gate confound, now three separate misreadings of the same n=6 table). The
-visibility-saturation mechanism proposed as an explanation didn't survive its own check. Whether to
-(a) run more seeds at radius 6 to firm up the sign-consistency read, (b) run a matched set at a
-different radius (e.g. 4) to see whether the same sign-mostly-negative pattern holds off this one
-radius, or (c) move to a different `loop/GOAL.md` priority-list item now that this axis has an
-actual (if fragile) positive result to report — raised as this stand-up's "Decisions needed" item.
+**What this does and doesn't settle** (corrected 2026-08-26/27 per the PR #53 review, @SakkarinKt:
+the paragraph below originally got the sign of its own finding backwards). `driftAttributableError`
+is `intervention − control` (2026-08-13's "gate (b)" convention: **positive** `diffMean` is the
+predicted-direction result — the frozen agent's post-freeze error rising *above* the both-frozen
+control, evidence the still-training partner's drift is degrading the frozen agent's world model).
+8/9 negative is therefore a consistent result **against** the predicted drift direction, not "the
+strongest evidence to date for some real effect" as originally written — if anything, this reads as
+evidence the freeze intervention (at this design, this radius) is *not* producing the hypothesized
+rise, or is producing its opposite, for most seeds.
+
+Separately: all nine pooled rows are at partner-`viewRadius`=6 — there is no radius contrast in this
+n=9 at all (2026-08-24's/25's radius-2/4/6 sweep used a different, smaller seed set). So this sign
+result is evidence about the **freeze-vs-control contrast at radius 6 specifically**, not about
+partner-`viewRadius` as a variable — the original paragraph's framing ("effect of partner-viewRadius
+on |diffMean|'s direction") overclaimed scope the design doesn't have. What `n=9` at radius 6 does
+support, at `p≈0.039` uncorrected: post-freeze loss differences at this specific radius are not
+symmetric noise around zero — something is producing a consistent negative sign, and identifying
+*what* (before deciding whether it bears on the drift-attributable-error hypothesis at all) needs a
+design that isn't confined to one radius. Next: a matched seed set at radius 4, the option that
+builds the actual radius contrast this paragraph previously assumed without having one (more
+radius-6 seeds would need a pre-registered stopping rule first, given `n=9` already crossed `p<0.05`
+on a post-hoc look).
 
 Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-26-radius6-more-seeds/`.
+
+**2026-08-27 update**: processing PR #53's review (@SakkarinKt, posted as an issue comment after
+merge) — the two corrections to the "What this does and doesn't settle" paragraph above (sign
+direction relative to gate (b); the n=9 radius-6 pool having zero radius contrast), then the
+review's "Next": a matched seed set at radius 4, since it is the only one of the previous
+"Decisions needed" options that actually builds a radius contrast, and more radius-6 seeds would
+need a pre-registered stopping rule first given `n=9` already crossed `p<0.05` on a post-hoc look.
+
+Ran `experiments/2026-08-26-radius4-matched-seeds/run.ts`: the same nine seeds already run at
+radius 6 (1001-1009), now at partner-only `viewRadius=4` — landmark gate still pinned at 2. "Matched"
+means paired, not independent: each seed now has both a radius-4 and a radius-6 `diffMean`, read
+from `artifacts/2026-08-26-radius6-more-seeds/pooled-radius6.summary.csv` for the radius-6 half
+rather than rerun (deterministic harness, as every prior pooling in this line of runs).
+
+| seed | diffMean (r4) | diffMean (r6) | same sign? |
+| --- | --- | --- | --- |
+| 1001 | -0.0138 | -0.0138 | yes |
+| 1002 | -0.1139 | -0.0435 | yes |
+| 1003 | +0.4271 | -0.5103 | **no** |
+| 1004 | -0.0741 | -0.0813 | yes |
+| 1005 | -0.2331 | -0.1242 | yes |
+| 1006 | +0.0668 | +0.8542 | yes |
+| 1007 | +0.3471 | -0.0453 | **no** |
+| 1008 | 0.0000 | -0.7359 | **no** |
+| 1009 | -0.0724 | -0.0195 | yes |
+
+**Result** (`self_checked, high confidence` on the numbers; `medium confidence` on the
+interpretation). Radius 4: mean(diffMean) = +0.0371, mean(|diffMean|) = 0.1498, stddev = 0.2036,
+sign split **5 negative, 3 positive, 1 exactly zero** (seed 1008) — a materially different picture
+from radius 6's 8-negative/1-positive and negative mean (-0.0800). Only **6/9 seeds share the same
+sign at both radii**; under a null where each radius's sign is an independent coin flip, 6-or-more
+matches out of 9 has `p≈0.254` (one-sided binomial) — not a surprising outcome by chance, i.e. this
+run finds no evidence that a given seed's sign is a stable per-seed trait carrying across radius.
+
+**What this does and doesn't settle**: the radius contrast this run was built to establish argues
+*against* a partner-`viewRadius`-linked mechanism producing radius 6's negative-skewed sign pattern:
+if that skew reflected something about radius 6 specifically (or about partner-viewRadius generally)
+that these seeds' geometries interact with consistently, the same seeds at radius 4 should skew the
+same way more often than chance — they don't (67% agreement, statistically indistinguishable from
+50%). The simpler reading is that radius 6's `p≈0.039` sign result was itself a chance pattern in a
+noisy quantity, surfaced by looking at one radius after several prior looks at this same dataset
+(pre-freeze-training confound, landmark-gate confound, the n=6 misreadings, now this) — consistent
+with, though not proof of, the original "n=3 (then n=6, n=9) sampling noise" reading this
+investigation kept returning to and moving away from at each step. This axis (partner-`viewRadius`'s
+effect on drift-attributable error, measured via sign consistency of `diffMean`) has now had four
+independent looks (2026-08-23's/24's 3-radius sweeps, the n=9 radius-6 pool, this radius-4 match)
+without a result that survives its own follow-up check. Raised as this stand-up's "Decisions
+needed" item: continue on this same measurement design (more radii, more seeds) given its track
+record, or move to a different `loop/GOAL.md` priority-list item — this proposal's remaining
+priorities (RSSM completion, vertical-slice hardening, G2 module specs) don't depend on this
+question being resolved first.
+
+Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-26-radius4-matched-seeds/`.
