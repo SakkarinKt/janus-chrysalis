@@ -902,29 +902,46 @@ rather than rerun (deterministic harness, as every prior pooling in this line of
 | 1009 | -0.0724 | -0.0195 | yes |
 
 **Result** (`self_checked, high confidence` on the numbers; `medium confidence` on the
-interpretation). Radius 4: mean(diffMean) = +0.0371, mean(|diffMean|) = 0.1498, stddev = 0.2036,
-sign split **5 negative, 3 positive, 1 exactly zero** (seed 1008) — a materially different picture
-from radius 6's 8-negative/1-positive and negative mean (-0.0800). Only **6/9 seeds share the same
-sign at both radii**; under a null where each radius's sign is an independent coin flip, 6-or-more
-matches out of 9 has `p≈0.254` (one-sided binomial) — not a surprising outcome by chance, i.e. this
-run finds no evidence that a given seed's sign is a stable per-seed trait carrying across radius.
+interpretation). Radius 4: mean(diffMean) = +0.0371, mean(|diffMean|) = 0.1498, stddev
+(population) = 0.2036, sign split **5 negative, 3 positive, 1 exactly zero** (seed 1008) — a
+materially different picture from radius 6's 8-negative/1-positive and negative mean (-0.0800).
+Only **6/9 seeds share the same sign at both radii**; under a null where each radius's sign is an
+independent coin flip, 6-or-more matches out of 9 has `p≈0.254` (one-sided binomial).
 
-**What this does and doesn't settle**: the radius contrast this run was built to establish argues
-*against* a partner-`viewRadius`-linked mechanism producing radius 6's negative-skewed sign pattern:
-if that skew reflected something about radius 6 specifically (or about partner-viewRadius generally)
-that these seeds' geometries interact with consistently, the same seeds at radius 4 should skew the
-same way more often than chance — they don't (67% agreement, statistically indistinguishable from
-50%). The simpler reading is that radius 6's `p≈0.039` sign result was itself a chance pattern in a
-noisy quantity, surfaced by looking at one radius after several prior looks at this same dataset
-(pre-freeze-training confound, landmark-gate confound, the n=6 misreadings, now this) — consistent
-with, though not proof of, the original "n=3 (then n=6, n=9) sampling noise" reading this
-investigation kept returning to and moving away from at each step. This axis (partner-`viewRadius`'s
-effect on drift-attributable error, measured via sign consistency of `diffMean`) has now had four
-independent looks (2026-08-23's/24's 3-radius sweeps, the n=9 radius-6 pool, this radius-4 match)
-without a result that survives its own follow-up check. Raised as this stand-up's "Decisions
-needed" item: continue on this same measurement design (more radii, more seeds) given its track
-record, or move to a different `loop/GOAL.md` priority-list item — this proposal's remaining
-priorities (RSSM completion, vertical-slice hardening, G2 module specs) don't depend on this
-question being resolved first.
+**What this does and doesn't settle** (corrected 2026-08-27 per the PR #54 review, @SakkarinKt: the
+"radius 4 looks nothing like radius 6" conclusion below overclaimed scope — it mixed cells of very
+different statistical power). Seed 1008's exact-zero `diffMean` at radius 4 is explained in one line
+from its own manifest: `partnerVisibleSteps` 0/38 post-freeze — the partner was never visible to the
+frozen agent at this radius/seed, so its observation stream is bit-identical across
+control/intervention and `diffMean` is 0 **by construction**, not a genuine near-zero measurement.
+It is a zero-*power* cell, not evidence about sign. The same issue affects the sign tally more
+broadly: partner-visibility at radius 4 ranges from 0/38 to 38/38 across these nine seeds (1008: 0,
+1006: 2, 1003: 11 — all low-power; the other six: 27-38/38), while at radius 6 every seed has
+27-38/38 visibility. **Filtering to the six seeds with real power at radius 4 (partner-visible
+≥27/38 — 1001, 1002, 1004, 1005, 1007, 1009)**: radius 4's sign split is **5 negative, 1 positive**,
+and 5/6 of those seeds share the same sign at radius 6 too (`p≈0.109` one-sided under the
+independent-coin-flip null — still not conventionally significant at this n, but no longer "looks
+nothing like radius 6" either). Not a pure power story, though: seed 1007 has full visibility at
+*both* radii (38/38 at each) and still flips sign (+0.3471 at radius 4, -0.0453 at radius 6) — power
+explains most but not all of the apparent non-replication. The more honest continuous-valued test on
+the full n=9 paired difference (radius 4 minus radius 6): mean = +0.117, `t(8) ≈ 0.69` — null, no
+significant shift either way, sign-count and magnitude readings pointing in different directions at
+this sample size.
+
+Also worth correcting: the previous "four independent looks" framing double-counted. Seeds
+1001-1003's radius-4 values reproduce 2026-08-24's original 3-radius sweep bit-for-bit (a clean
+determinism check across three days and a different script, but also meaning that sweep's own
+radius-4-vs-radius-6 sign flip for seed 1003 was already visible in that one earlier run, not a
+fresh independent observation here).
+
+**Where this leaves the axis**: not settled as noise — the apparent non-replication at radius 4 was
+substantially a power artifact, and the power-filtered subset's sign pattern (5/6 negative, matching
+radius 6's skew) is more consistent with *some* real signal than the unfiltered comparison suggested.
+But it is also not confirmed: `n=6` filtered seeds is a small, post-hoc-selected sample, seed 1007's
+full-power flip is an unexplained counter-example, and the continuous paired test stays null.
+Raised as this stand-up's "Decisions needed" item, per the review's own framing: a power-aware pass
+(condition the sign analysis on partner visibility, or design a run that keeps visibility high
+across the radii being compared) before deciding whether to keep investing increments in this axis
+or move to a different `loop/GOAL.md` priority-list item.
 
 Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-26-radius4-matched-seeds/`.
