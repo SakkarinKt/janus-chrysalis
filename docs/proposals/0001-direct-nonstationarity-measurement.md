@@ -945,3 +945,99 @@ across the radii being compared) before deciding whether to keep investing incre
 or move to a different `loop/GOAL.md` priority-list item.
 
 Full detail, all findings, and the raw per-seed manifests: `artifacts/2026-08-26-radius4-matched-seeds/`.
+
+**2026-08-27 update (third cycle — processing the PR #55 review)**: processing PR #55's review
+(@SakkarinKt, posted as an issue comment after merge, on the run that itself processed PR #54's
+review). Two non-blocking corrections to the "What this does and doesn't settle" paragraph above,
+then the review's answered "Decisions needed" item.
+
+**Corrections** (both flagged by the review as non-blocking):
+
+1. Among the six seeds filtered to partner-visible ≥27/38 at radius 4 (1001, 1002, 1004, 1005, 1007,
+   1009), **all six** have a negative radius-6 sign (`self_checked, high confidence` — direct read of
+   `artifacts/2026-08-26-radius6-more-seeds/pooled-radius6.summary.csv`). So "5/6 of those seeds match
+   radius 6's sign too" is arithmetically identical to "this subset's radius-4 sign split is 5
+   negative/1 positive" — a one-sample sign test on radius 4 alone, not the paired cross-radius
+   replication result the earlier phrasing implied.
+2. Partner-visibility is a realized property of a seed's trajectory, not a design knob this
+   investigation was exercising — conditioning the sign analysis on it after the fact (as the
+   power-aware pass did) is a power diagnostic, not a clean test of the hypothesis. The argument this
+   motivates — design the visibility in rather than filter for it afterward — is what the run below
+   does.
+
+**Pre-registered design** (written and committed before any of this run's `diffMean` values were
+computed — this paragraph and the criterion below are not adjusted after the fact; only the "Result"
+section further down was added once the run finished):
+
+- Fresh seeds, unused anywhere earlier in this investigation: **1010, 1011, 1012**.
+- Identical harness to every run since 2026-08-24: decoupled partner-only `viewRadius` switch,
+  landmark gate (`config.viewRadius`) pinned at 2 for the whole episode, paired init,
+  `FREEZE_STEP=38`, `frozenAgentIndex=0`, `HORIZON=75`, Arm-A dims, default `QLearningConfig`.
+- `partnerViewRadius = 14` = `2×(gridSize−1)`, `gridSize=8` — the **maximum possible Manhattan
+  distance** between any two cells on this grid (`src/env/gridworld.ts`'s `distance()` is
+  `|Δx|+|Δy|`). Unlike radius 4/6/8 in earlier sweeps, which were empirically found to *often*
+  saturate visibility, radius 14 guarantees the partner is visible to the frozen agent on **every**
+  post-freeze step for **every** seed by mathematical necessity — there is no post-hoc conditioning
+  step because no seed can land in a low-power cell. `experiments/2026-08-27-high-visibility-preregistered/run.ts`
+  asserts this as an invariant: any seed whose `postFreezePartnerVisibleCount` isn't exactly 38/38
+  would indicate a bug in the run, not a data point, and would block interpreting the results.
+- **Replication criterion, fixed here before running**: primary readout is the sign of each new
+  seed's `diffMean`. Combined test: pool these 3 signs with the existing 9 radius-6 seeds' signs
+  (1001-1009, all already 27-38/38 partner-visible — the closest prior condition to "high
+  visibility," though only this run's design makes it total) for a two-sided exact binomial sign
+  test against `p=0.5`, `n=12`.
+  - **Replicates** iff (i) ≥2 of the 3 new seeds are negative, AND (ii) the combined `n=12`
+    two-sided binomial `p` stays below 0.05 in the negative direction. → report as a candidate real
+    effect and raise a "Decisions needed" item proposing a properly powered (≥5-seed) follow-up —
+    gated scope per `loop/GOAL.md`, not something this run could act on unilaterally even on a
+    replication.
+  - **Does not replicate** iff either (i) 2 or 3 of the new seeds are positive, or (ii) combined
+    `p ≥ 0.05`. → per the review's own instruction, close this axis here and propose
+    `loop/GOAL.md` priority 3 (RSSM completion) as next increment.
+
+Ran `experiments/2026-08-27-high-visibility-preregistered/run.ts`.
+
+**Invariant check** (`self_checked, high confidence` — direct tally over this run's telemetry):
+all 3 seeds' `postFreezePartnerVisibleCount` came back exactly 38/38 — `partnerViewRadius=14`
+guaranteed full visibility as designed, with no exceptions to check for or filter out. All 3
+seeds also passed `assertPreFreezeParity`'s usual `identical: true`.
+
+| seed | diffMean | partnerVisible/38 |
+| --- | --- | --- |
+| 1010 | +0.0078 | 38/38 |
+| 1011 | +0.0323 | 38/38 |
+| 1012 | +0.0077 | 38/38 |
+
+**Result** (`self_checked, high confidence` on the numbers — direct output of this run;
+pre-registered criterion applied mechanically, no post-hoc discretion). **All three new seeds are
+positive** — the opposite sign from the established radius-6 skew (8 negative/1 positive out of
+the prior 9). Combined test: 8 negative / 12 total (the 3 new positives added to the prior 8
+negative/1 positive), two-sided exact binomial `p ≈ 0.388` under `p=0.5` — not remotely
+significant, down from the prior n=9's `p≈0.039`. Per the pre-registered criterion: (i) 0 of 3 new
+seeds are negative (required ≥2) and (ii) combined `p ≥ 0.05` — **both replication conditions
+fail**. This is not a marginal or ambiguous read against the pre-committed criterion; it fails on
+both legs.
+
+**Where this leaves the axis**: per the review's own instruction, this closes the
+partner-visibility/radius axis — the negative skew seen across every prior radius-6 sample does
+not reproduce under a design that removes the visibility-power confound entirely, using seeds this
+investigation had never looked at before. Combined with the earlier radius-4 comparison's null
+continuous paired test (mean +0.117, `t(8)≈0.69`) and this run's reversal, the most honest current
+read across this whole investigation (2026-08-22 through today, seven runs) is that no consistent,
+replicating drift-attributable-error signal has been found at this design and instrument — the
+repeated negative skews at radius 6 specifically (`n=9`, `p≈0.039`) look, in hindsight, more
+consistent with a radius-6-specific or seed-set-specific artifact than with a general
+partner-visibility-linked effect, since a design built to remove exactly that confound produced
+the opposite sign on every one of 3 fresh draws. Executing the PR #55 review's own pre-committed
+instruction for exactly this outcome ("if the negative skew doesn't reproduce under that
+pre-committed criterion, close this axis and move to priority 3") — not a new decision this run is
+asking the human to make: this closure was already decided in that review, contingent on this
+run's result, and the result came back on the "does not replicate" side. Next increment is
+`loop/GOAL.md` priority 3: RSSM completion (world-model losses — KL balancing with a free-bits
+floor, observation reconstruction — and wiring `RSSMCell` into `src/experiment/freeze.ts`'s
+rollout), not further seeds on this axis. No edit to `loop/GOAL.md` or this doc's "Current status"
+made or proposed here — the priority-list order there already names RSSM completion as priority 3;
+this update only reports that the pre-registered condition for moving to it has now been met.
+
+Full detail, all findings, and the raw per-seed manifests:
+`artifacts/2026-08-27-high-visibility-preregistered/`.
