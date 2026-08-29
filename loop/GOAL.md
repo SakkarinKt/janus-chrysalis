@@ -29,6 +29,12 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
   fire (`docs/adr/0002-js-ml-stack.md` addendum; stand-ups 2026-07-22/23 plus the 2026-07-24
   correction, PRs #23–#25). Its priority slot is replaced by the Phase-2 quality pass below, and
   `reports/quality/` joins the allowed write paths.
+- **Mid-phase amendment 2026-08-29** (human-approved, human-merged): an **explicit hold in a human
+  reply overrides the priority-1 trigger** — see priority 1 below. Added after run 3 of 2026-08-27
+  acted on PR #55's "do not act on this comment now ... pick it up on the next *scheduled* run" 40
+  minutes after it was posted, and shipped PR #56 without acknowledging the override (PR #56/#57
+  reviews). The rule is deliberately general: it binds on *any* clearly-worded hold, not on the
+  particular wording #55 happened to use.
 
 ## Today's increment (Phase 2 / L2-P2-slice)
 
@@ -36,6 +42,15 @@ Pick **one** bounded increment, in priority order:
 
 1. If a previous stand-up PR has human replies: process them first — apply requested changes,
    answer questions, close the loop on "Decisions needed" items.
+   **Exception — an explicit hold outranks this trigger.** If the reply itself defers the work, that
+   instruction wins over priority 1 and you do **not** process it in the current run. This binds on
+   any clearly-worded hold, whatever its phrasing ("do not act on this now", "pick this up on the
+   next scheduled run", "wait until X lands", "leave this for the human") — never read it narrowly
+   against the exact words used. Carry the item to the run the hold names; if it names none, or its
+   target is ambiguous, it defers to the **next scheduled run**, never to the current one. When you
+   do act on a held item, say so in that run's stand-up "Done" — that it was held, when the hold was
+   posted, and which run you are treating as the one it named. Overriding a hold, or acting on one
+   silently, is a process failure to report under "Learned", not a judgement call to make.
 2. **Phase-2 quality pass — bug hunt + plan-drift audit** (mid-phase amendment 2026-07-29;
    replaces the closed week-3 spike — see Current status). One run, one report:
    `reports/quality/YYYY-MM-DD-quality-pass.md`. **Bug hunt** across `src/`, `test/`,
@@ -146,6 +161,9 @@ A run that produces no PR + report is a failed run. If you cannot complete the i
 ## Answering "Decisions needed"
 
 - The **human's comment/review is the answer** — a checked box is only bookkeeping and never carries a decision on its own. Judge whether an item is answered by the presence of a human comment/review, **never** by checkbox state, and never tick a "Decisions needed" box yourself (leave every one `[ ]` for the human).
+- **An explicit hold *is* an answer** — it answers "when", not "what". Treat it as binding for the
+  current run and carry the item forward per priority 1's exception; do not re-open it, re-litigate
+  the timing, or treat a held item as unanswered for the safety valve's purposes.
 - **Never self-resolve a "Decisions needed" item.** If it is genuinely the human's call, leave it and do not act. If you can safely proceed with a sensible default, it is not a decision — record it under "Assumptions made (proceeding unless told otherwise)" instead, so the human can veto rather than gate.
 
 ## Safety valve
