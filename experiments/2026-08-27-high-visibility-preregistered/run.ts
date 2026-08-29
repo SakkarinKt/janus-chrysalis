@@ -114,7 +114,7 @@ function binomialUpperTail(k: number, n: number): number {
 /** Two-sided exact binomial p-value for X ~ Binomial(n, 0.5): 2 * min(P(X>=k), P(X<=k)), capped at 1. */
 function binomialTwoSided(k: number, n: number): number {
   const upper = binomialUpperTail(k, n);
-  const lower = k === 0 ? 1 : binomialUpperTail(n - k, n); // P(X<=k) = P(X>=n-k) by symmetry at p=0.5
+  const lower = binomialUpperTail(n - k, n); // P(X<=k) = P(X>=n-k) by symmetry at p=0.5, valid at k=0 too (P(X<=0) = P(X>=n) = 1/2^n)
   return Math.min(1, 2 * Math.min(upper, lower));
 }
 
