@@ -33,6 +33,38 @@ export interface WorldModelConfig {
   seed?: number;
 }
 
+/**
+ * Thrown by `WorldModel.step()` when the computed loss, or either of its
+ * `reconstructionLoss`/`klLoss` components, is non-finite (`NaN` or
+ * `±Infinity`) — the "NaN → graceful halt" invariant (`loop/GOAL.md`
+ * priority 5). See `docs/explainers/0009-worldmodel-nan-halt.md` for what
+ * this does and doesn't guarantee: in particular, for a `train: true` step
+ * it cannot undo the optimizer update `forward()` already applied before
+ * the non-finite value was ever read back — it only stops that corruption
+ * from silently propagating into every later step() call.
+ */
+export class WorldModelNaNError extends Error {
+  readonly loss: number;
+  readonly reconstructionLoss: number;
+  readonly klLoss: number;
+
+  // No TS parameter-property shorthand: Node runs these .ts files with
+  // type-stripping only (no real compile step, package.json's "test"
+  // script), and `constructor(readonly x: number)` isn't valid stripped
+  // JavaScript — same constraint `src/env/types.ts`'s `Action` const-object
+  // comment documents for `enum`.
+  constructor(loss: number, reconstructionLoss: number, klLoss: number) {
+    super(
+      `WorldModel.step(): non-finite loss (loss=${loss}, reconstructionLoss=${reconstructionLoss}, ` +
+        `klLoss=${klLoss}) — halting rather than risk silently continuing on a corrupted state.`,
+    );
+    this.name = "WorldModelNaNError";
+    this.loss = loss;
+    this.reconstructionLoss = reconstructionLoss;
+    this.klLoss = klLoss;
+  }
+}
+
 export interface WorldModelStepResult {
   /** reconstructionLoss + klBalancedLoss's `total` (recon + dyn+rep), as a plain number. */
   loss: number;
@@ -201,6 +233,32 @@ export class WorldModel {
       nextDeterministic?.dispose();
       nextStochastic?.dispose();
       throw err;
+    }
+
+    if (
+      !Number.isFinite(lossValue) ||
+      !Number.isFinite(reconstructionLossValue) ||
+      !Number.isFinite(klLossValue)
+    ) {
+      // forward() returned normally — this isn't the catch block's "threw
+      // before completing" case, it's a value that computed successfully
+      // and is NaN/±Infinity. When train, tf.variableGrads already called
+      // applyGradients above; that update cannot be undone from here. What
+      // this check prevents is compounding: without it, this.state would be
+      // reassigned to next{Deterministic,Stochastic} — themselves computed
+      // from the same non-finite forward pass — and every later step() call
+      // would keep producing more non-finite losses that read to a caller as
+      // ordinary (if extreme) numbers, e.g. surfacing as a spurious
+      // drift-attributable-error reading instead of the training collapse it
+      // actually is. Throwing here surfaces the failure at its origin
+      // instead. Same state-preservation contract as the catch block above —
+      // this.state is never reassigned below, so prevState stays exactly as
+      // it was and remains usable — and only what this forward() pass itself
+      // allocated and tf.keep()'d gets disposed here.
+      observationTensor.dispose();
+      nextDeterministic!.dispose();
+      nextStochastic!.dispose();
+      throw new WorldModelNaNError(lossValue, reconstructionLossValue, klLossValue);
     }
 
     observationTensor.dispose();
