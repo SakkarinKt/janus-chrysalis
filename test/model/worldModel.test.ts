@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import tf from "@tensorflow/tfjs-node";
-import { WorldModel } from "../../src/model/worldModel.ts";
+import { WorldModel, WorldModelNaNError } from "../../src/model/worldModel.ts";
 import { Action } from "../../src/env/types.ts";
 import { Rng } from "../../src/env/rng.ts";
 
@@ -258,6 +258,73 @@ test("WorldModel: a throw from decoder.decode() — after the tf.keep() calls, u
 
   const after = wm.currentState.deterministic.arraySync();
   assert.deepEqual(after, before, "state must be unchanged after a caught throw from decode()");
+
+  wm.dispose();
+});
+
+test("WorldModel: a NaN-valued observation with train=false throws WorldModelNaNError, leaves recurrent state and weights untouched and leaks no tensors, and a subsequent clean step recovers fully — the NaN-halt invariant (loop/GOAL.md priority 5, docs/explainers/0009)", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+  wm.step(Action.Up, OBSERVATION, rng, true);
+  const nanObservation = [NaN, ...OBSERVATION.slice(1)];
+
+  const beforeState = wm.currentState.deterministic.arraySync();
+  const beforeWeights = wm.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+  const beforeTensors = tf.memory().numTensors;
+
+  assert.throws(
+    () => wm.step(Action.Up, nanObservation, rng, false),
+    (err: unknown) =>
+      err instanceof WorldModelNaNError && Number.isNaN(err.loss) && Number.isNaN(err.reconstructionLoss),
+  );
+
+  const afterState = wm.currentState.deterministic.arraySync();
+  assert.deepEqual(afterState, beforeState, "recurrent state must be unchanged after a NaN-halt throw");
+  const afterWeights = wm.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+  assert.deepEqual(afterWeights, beforeWeights, "train=false must not move any weight, even on a NaN-halt throw");
+  const afterTensors = tf.memory().numTensors;
+  assert.equal(
+    afterTensors - beforeTensors,
+    0,
+    `expected 0 net tensor growth across a NaN-halt throw, got ${afterTensors - beforeTensors}`,
+  );
+
+  const result = wm.step(Action.Down, OBSERVATION, rng, true);
+  assert.ok(Number.isFinite(result.loss), "model must recover fully after a caught train=false NaN-halt throw");
+
+  wm.dispose();
+});
+
+test("WorldModel: a NaN-valued observation with train=true throws WorldModelNaNError and leaves recurrent state unchanged and leak-free, but — documented limitation, docs/explainers/0009 — cannot undo the optimizer step forward() already applied before the throw, so weights are left NaN-corrupted", () => {
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+  const rng = new Rng(1);
+  wm.step(Action.Up, OBSERVATION, rng, true);
+  const nanObservation = [NaN, ...OBSERVATION.slice(1)];
+
+  const beforeState = wm.currentState.deterministic.arraySync();
+  const beforeTensors = tf.memory().numTensors;
+
+  assert.throws(
+    () => wm.step(Action.Up, nanObservation, rng, true),
+    (err: unknown) =>
+      err instanceof WorldModelNaNError && Number.isNaN(err.loss) && Number.isNaN(err.reconstructionLoss),
+  );
+
+  const afterState = wm.currentState.deterministic.arraySync();
+  assert.deepEqual(afterState, beforeState, "recurrent state must be unchanged after a NaN-halt throw");
+  const afterTensors = tf.memory().numTensors;
+  assert.equal(
+    afterTensors - beforeTensors,
+    0,
+    `expected 0 net tensor growth across a NaN-halt throw, got ${afterTensors - beforeTensors}`,
+  );
+
+  const afterWeights = wm.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
+  assert.ok(
+    afterWeights.some((w) => w.some((v) => Number.isNaN(v))),
+    "documented limitation: train=true's optimizer step already ran on the non-finite gradient before " +
+      "the throw, so weights are left NaN — the halt stops further compounding, it doesn't undo this step",
+  );
 
   wm.dispose();
 });
