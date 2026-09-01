@@ -28,6 +28,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { binomialUpperTail } from "../../src/experiment/statistics.ts";
 
 const RUN_ID = "2026-08-27-power-aware-radius-analysis";
 const VISIBILITY_THRESHOLD = 27; // Matches the PR #54 review's own choice, out of 38 post-freeze steps.
@@ -53,17 +54,6 @@ function sampleStddev(values: number[]): number {
   const m = mean(values);
   const sumSquares = values.reduce((acc, v) => acc + (v - m) ** 2, 0);
   return Math.sqrt(sumSquares / (values.length - 1));
-}
-
-/** One-sided binomial P(X >= k) for X ~ Binomial(n, 0.5). */
-function binomialUpperTail(k: number, n: number): number {
-  let total = 0;
-  let coefficient = 1;
-  for (let i = 0; i <= n; i++) {
-    if (i > 0) coefficient = (coefficient * (n - i + 1)) / i;
-    if (i >= k) total += coefficient;
-  }
-  return total / 2 ** n;
 }
 
 function readRows(): Row[] {

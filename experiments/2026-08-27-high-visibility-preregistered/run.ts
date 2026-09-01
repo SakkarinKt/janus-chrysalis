@@ -49,6 +49,7 @@ import {
   postFreezeLandmarkVisibleCount,
   postFreezeLossSeries,
 } from "../../src/experiment/metrics.ts";
+import { binomialTwoSided } from "../../src/experiment/statistics.ts";
 
 const RUN_ID = "2026-08-27-high-visibility-preregistered";
 const SEEDS = [1010, 1011, 1012]; // Fresh — unused anywhere earlier in this investigation.
@@ -98,24 +99,6 @@ function slope(values: number[]): number {
     den += (xs[i]! - xMean) ** 2;
   }
   return den === 0 ? 0 : num / den;
-}
-
-/** One-sided binomial P(X >= k) for X ~ Binomial(n, 0.5). */
-function binomialUpperTail(k: number, n: number): number {
-  let total = 0;
-  let coefficient = 1;
-  for (let i = 0; i <= n; i++) {
-    if (i > 0) coefficient = (coefficient * (n - i + 1)) / i;
-    if (i >= k) total += coefficient;
-  }
-  return total / 2 ** n;
-}
-
-/** Two-sided exact binomial p-value for X ~ Binomial(n, 0.5): 2 * min(P(X>=k), P(X<=k)), capped at 1. */
-function binomialTwoSided(k: number, n: number): number {
-  const upper = binomialUpperTail(k, n);
-  const lower = binomialUpperTail(n - k, n); // P(X<=k) = P(X>=n-k) by symmetry at p=0.5, valid at k=0 too (P(X<=0) = P(X>=n) = 1/2^n)
-  return Math.min(1, 2 * Math.min(upper, lower));
 }
 
 /** Same pairing as every prior run's `buildWorldModels` — one seed stream per agent index. */
