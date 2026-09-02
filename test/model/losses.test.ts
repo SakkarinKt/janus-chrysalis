@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import tf from "@tensorflow/tfjs-node";
-import { categoricalKL, stopGradient, klBalancedLoss, reconstructionLoss } from "../../src/model/losses.ts";
+import {
+  categoricalKL,
+  stopGradient,
+  klBalancedLoss,
+  reconstructionLoss,
+  continueLoss,
+} from "../../src/model/losses.ts";
 import type { LatentDistribution } from "../../src/model/rssm.ts";
 
 test("categoricalKL: zero for two identical distributions", () => {
@@ -57,6 +63,38 @@ test("reconstructionLoss: batch-means across rows (two identical rows give the s
   const singleLoss = reconstructionLoss(predictedSingle, targetSingle).arraySync() as number;
 
   assert.ok(Math.abs(pairLoss - singleLoss) < 1e-5, `expected equal per-row loss to survive batching: ${pairLoss} vs ${singleLoss}`);
+});
+
+test("continueLoss: small for a confidently-correct logit, large for a confidently-wrong one against the same target (checks label/logit polarity, not just that the function runs)", () => {
+  const target = tf.tensor2d([[1]]);
+  const correctLogit = tf.tensor2d([[10]]);
+  const wrongLogit = tf.tensor2d([[-10]]);
+  const correctLossValue = continueLoss(correctLogit, target).arraySync() as number;
+  const wrongLossValue = continueLoss(wrongLogit, target).arraySync() as number;
+  assert.ok(correctLossValue < 1e-3, `expected ~0 for a confidently-correct logit, got ${correctLossValue}`);
+  assert.ok(wrongLossValue > 5, `expected a large loss for a confidently-wrong logit, got ${wrongLossValue}`);
+});
+
+test("continueLoss: batch-means over rows (two identical rows give the same loss as one)", () => {
+  const targetPair = tf.tensor2d([[1], [1]]);
+  const logitPair = tf.tensor2d([[0.5], [0.5]]);
+  const pairLoss = continueLoss(logitPair, targetPair).arraySync() as number;
+
+  const targetSingle = tf.tensor2d([[1]]);
+  const logitSingle = tf.tensor2d([[0.5]]);
+  const singleLoss = continueLoss(logitSingle, targetSingle).arraySync() as number;
+
+  assert.ok(Math.abs(pairLoss - singleLoss) < 1e-5, `expected equal per-row loss to survive batching: ${pairLoss} vs ${singleLoss}`);
+});
+
+test("continueLoss: gradient flows into the logit", () => {
+  const target = tf.tensor2d([[1]]);
+  const logitVar = tf.variable(tf.tensor2d([[0.2]]));
+  const { value, grads } = tf.variableGrads(() => continueLoss(logitVar, target), [logitVar]);
+  value.dispose();
+  const grad = grads[logitVar.name];
+  if (!grad) throw new Error(`no gradient recorded for ${logitVar.name}`);
+  assert.ok(Array.from(grad.dataSync()).some((v) => v !== 0), "expected a nonzero gradient w.r.t. the logit");
 });
 
 test("stopGradient: forward value equals the input exactly", () => {

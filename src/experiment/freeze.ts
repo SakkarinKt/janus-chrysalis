@@ -144,7 +144,9 @@ export function runEpisode(
     });
 
     const worldModelLoss = observations.map(
-      (_, i) => worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i]).loss,
+      (_, i) =>
+        worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i], result.done)
+          .loss,
     );
 
     records.push({
