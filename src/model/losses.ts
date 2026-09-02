@@ -79,6 +79,25 @@ export function reconstructionLoss(predicted: tf.Tensor2D, target: tf.Tensor2D):
   });
 }
 
+/**
+ * Continuation-head loss — binary cross-entropy between a raw continuation
+ * logit (`[batch, 1]`, `ContinueHead.predict()`'s output) and a `{0, 1}`
+ * target (`[batch, 1]`), batch-meaned. `target` is `1` when the episode
+ * continues past this transition, `0` when it doesn't — see
+ * docs/explainers/0011-continue-termination-head.md for the target
+ * definition and the degenerate-target caveat for Arm-A's gridworld.
+ *
+ * Uses `tf.losses.sigmoidCrossEntropy` directly rather than composing
+ * `sigmoid` + `log` by hand: it takes the logit (not a pre-squashed
+ * probability) and is implemented with the numerically-stable
+ * `max(x, 0) - x*z + log(1 + exp(-|x|))` form internally, so — unlike
+ * `categoricalKL`'s hand-rolled `log(probs + LOG_PROB_EPSILON)` — it
+ * doesn't need a manual epsilon floor to avoid `log(0)`.
+ */
+export function continueLoss(logit: tf.Tensor2D, target: tf.Tensor2D): tf.Scalar {
+  return tf.tidy(() => tf.losses.sigmoidCrossEntropy(target, logit) as tf.Scalar);
+}
+
 export interface KLBalancedLossConfig {
   /** Nats floor each of dynLoss/repLoss is clipped to, per batch row, before the batch mean. Default 1. */
   freeBits?: number;

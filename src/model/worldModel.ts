@@ -1,9 +1,10 @@
 import tf from "@tensorflow/tfjs-node";
 import { RSSMCell } from "./rssm.ts";
 import type { RSSMConfig, RSSMState } from "./rssm.ts";
-import { klBalancedLoss, reconstructionLoss } from "./losses.ts";
+import { klBalancedLoss, reconstructionLoss, continueLoss } from "./losses.ts";
 import type { KLBalancedLossConfig } from "./losses.ts";
 import { ObservationDecoder } from "./decoder.ts";
+import { ContinueHead } from "./continueHead.ts";
 import { Action } from "../env/types.ts";
 import type { Observation } from "../env/types.ts";
 import { deriveSeed, Rng } from "../env/rng.ts";
@@ -34,12 +35,12 @@ export interface WorldModelConfig {
 }
 
 /**
- * Thrown by `WorldModel.step()` when the computed loss, or either of its
- * `reconstructionLoss`/`klLoss` components, is non-finite (`NaN` or
- * `±Infinity`) — the "NaN → graceful halt" invariant (`loop/GOAL.md`
- * priority 5). See `docs/explainers/0009-worldmodel-nan-halt.md` for what
- * this does and doesn't guarantee: in particular, for a `train: true` step
- * it cannot undo the optimizer update `forward()` already applied before
+ * Thrown by `WorldModel.step()` when the computed loss, or any of its
+ * `reconstructionLoss`/`klLoss`/`continueLoss` components, is non-finite
+ * (`NaN` or `±Infinity`) — the "NaN → graceful halt" invariant
+ * (`loop/GOAL.md` priority 5). See `docs/explainers/0009-worldmodel-nan-halt.md`
+ * for what this does and doesn't guarantee: in particular, for a `train: true`
+ * step it cannot undo the optimizer update `forward()` already applied before
  * the non-finite value was ever read back — it only stops that corruption
  * from silently propagating into every later step() call.
  */
@@ -47,46 +48,53 @@ export class WorldModelNaNError extends Error {
   readonly loss: number;
   readonly reconstructionLoss: number;
   readonly klLoss: number;
+  readonly continueLoss: number;
 
   // No TS parameter-property shorthand: Node runs these .ts files with
   // type-stripping only (no real compile step, package.json's "test"
   // script), and `constructor(readonly x: number)` isn't valid stripped
   // JavaScript — same constraint `src/env/types.ts`'s `Action` const-object
   // comment documents for `enum`.
-  constructor(loss: number, reconstructionLoss: number, klLoss: number) {
+  constructor(loss: number, reconstructionLoss: number, klLoss: number, continueLoss: number) {
     super(
       `WorldModel.step(): non-finite loss (loss=${loss}, reconstructionLoss=${reconstructionLoss}, ` +
-        `klLoss=${klLoss}) — halting rather than risk silently continuing on a corrupted state.`,
+        `klLoss=${klLoss}, continueLoss=${continueLoss}) — halting rather than risk silently ` +
+        `continuing on a corrupted state.`,
     );
     this.name = "WorldModelNaNError";
     this.loss = loss;
     this.reconstructionLoss = reconstructionLoss;
     this.klLoss = klLoss;
+    this.continueLoss = continueLoss;
   }
 }
 
 export interface WorldModelStepResult {
-  /** reconstructionLoss + klBalancedLoss's `total` (recon + dyn+rep), as a plain number. */
+  /** reconstructionLoss + klBalancedLoss's `total` (recon + dyn+rep) + continueLoss, as a plain number. */
   loss: number;
   /** This step's reconstructionLoss alone, as a plain number — see docs/explainers/0006. */
   reconstructionLoss: number;
   /** This step's klBalancedLoss.total alone, as a plain number. */
   klLoss: number;
+  /** This step's continueLoss alone, as a plain number — see docs/explainers/0011. */
+  continueLoss: number;
 }
 
 /**
- * Wraps one `RSSMCell` and one `ObservationDecoder` with a shared optimizer
- * and the single persistent `RSSMState` a rollout's recurrence carries
- * across an episode — proposal `0001` Arm-A's per-agent world model. See
- * docs/explainers/0005-world-model-rollout-wiring.md for the rollout-wiring
- * design (why `step()` always advances state but only sometimes trains, the
- * tensor-lifecycle contract with `RSSMCell`, and the BPTT-horizon-1 amendment)
- * and docs/explainers/0006-observation-reconstruction-loss.md for the
- * decoder/reconstruction-loss piece.
+ * Wraps one `RSSMCell`, one `ObservationDecoder`, and one `ContinueHead` with
+ * a shared optimizer and the single persistent `RSSMState` a rollout's
+ * recurrence carries across an episode — proposal `0001` Arm-A's per-agent
+ * world model. See docs/explainers/0005-world-model-rollout-wiring.md for the
+ * rollout-wiring design (why `step()` always advances state but only
+ * sometimes trains, the tensor-lifecycle contract with `RSSMCell`, and the
+ * BPTT-horizon-1 amendment), docs/explainers/0006-observation-reconstruction-loss.md
+ * for the decoder/reconstruction-loss piece, and
+ * docs/explainers/0011-continue-termination-head.md for the continuation head.
  */
 export class WorldModel {
   readonly cell: RSSMCell;
   readonly decoder: ObservationDecoder;
+  readonly continueHead: ContinueHead;
   private readonly optimizer: tf.Optimizer;
   private readonly lossConfig: KLBalancedLossConfig;
   private readonly trainableVars: tf.Variable[];
@@ -98,6 +106,9 @@ export class WorldModel {
     this.decoder = new ObservationDecoder({
       observationSize: config.observationSize,
       ...(config.seed !== undefined && { seed: deriveSeed(config.seed, 1) }),
+    });
+    this.continueHead = new ContinueHead({
+      ...(config.seed !== undefined && { seed: deriveSeed(config.seed, 2) }),
     });
     this.lossConfig = config.lossConfig ?? {};
     this.optimizer = tf.train.adam(config.learningRate ?? 1e-3);
@@ -119,8 +130,13 @@ export class WorldModel {
         warmupRng,
       );
       this.decoder.decode(deterministic, posterior.sample);
+      this.continueHead.predict(deterministic, posterior.sample);
     });
-    this.trainableVars = [...this.cell.trainableWeights(), ...this.decoder.trainableWeights()];
+    this.trainableVars = [
+      ...this.cell.trainableWeights(),
+      ...this.decoder.trainableWeights(),
+      ...this.continueHead.trainableWeights(),
+    ];
   }
 
   /** The current recurrent state — `deterministic`/`stochastic`, per `RSSMState`. */
@@ -144,29 +160,34 @@ export class WorldModel {
    * Advances one real transition: h_t = step(prevState, action); z_t ~
    * posterior(h_t, observation); predicted_o_t = decoder(h_t, z_t); loss =
    * reconstructionLoss(predicted_o_t, o_t) + klBalancedLoss(prior(h_t), that
-   * posterior).total (docs/explainers/0006). When `train` is true, applies
-   * one Adam step toward `loss` before advancing; when false, still advances
-   * state and returns `loss` (for post-freeze prediction-error tracking, per
-   * proposal 0001) but leaves weights untouched. On success, disposes the
-   * previous state and the observation tensor. On a throw from `forward()`
-   * (e.g. a shape mismatch), `this.state` is left exactly as it was —
-   * `prevState` is untouched, remains `this.state`, and stays usable — and
-   * only what `forward()` itself allocated is cleaned up: the observation
-   * tensor plus, if the throw happened after the `tf.keep()` calls below
-   * (e.g. inside `decoder.decode()`/`reconstructionLoss()`), the two
-   * already-escaped next-state tensors (PR #40 review: an earlier version
-   * disposed `prevState`'s tensors unconditionally in a `finally`, which on
-   * a throw left `this.state` — still pointing at `prevState`, since it's
-   * only reassigned below on success — referencing disposed tensors).
+   * posterior).total + continueLoss(continueHead(h_t, z_t), target) — the
+   * last term added by docs/explainers/0011 (`done` is this transition's
+   * env-reported outcome, `StepResult.done` polarity: target is `0` when
+   * `done`, `1` otherwise). When `train` is true, applies one Adam step
+   * toward `loss` before advancing; when false, still advances state and
+   * returns `loss` (for post-freeze prediction-error tracking, per proposal
+   * 0001) but leaves weights untouched. On success, disposes the previous
+   * state and the observation tensor. On a throw from `forward()` (e.g. a
+   * shape mismatch), `this.state` is left exactly as it was — `prevState` is
+   * untouched, remains `this.state`, and stays usable — and only what
+   * `forward()` itself allocated is cleaned up: the observation tensor plus,
+   * if the throw happened after the `tf.keep()` calls below (e.g. inside
+   * `decoder.decode()`/`reconstructionLoss()`), the two already-escaped
+   * next-state tensors (PR #40 review: an earlier version disposed
+   * `prevState`'s tensors unconditionally in a `finally`, which on a throw
+   * left `this.state` — still pointing at `prevState`, since it's only
+   * reassigned below on success — referencing disposed tensors).
    */
-  step(action: Action, observation: Observation, rng: Rng, train: boolean): WorldModelStepResult {
+  step(action: Action, observation: Observation, rng: Rng, train: boolean, done: boolean): WorldModelStepResult {
     const prevState = this.state;
     const observationTensor = tf.tensor2d([observation]);
+    const continueTargetTensor = tf.tensor2d([[done ? 0 : 1]]);
 
     let nextDeterministic: tf.Tensor2D | undefined;
     let nextStochastic: tf.Tensor2D | undefined;
     let reconstructionLossValue!: number;
     let klLossValue!: number;
+    let continueLossValue!: number;
 
     // tf.variableGrads(f, ...) internally wraps `f` in its own tf.tidy
     // (tfjs's Engine.gradients: `this.tidy('forward', f)`) and disposes
@@ -177,9 +198,9 @@ export class WorldModel {
     // by then it's too late, they're already disposed. This is true in the
     // train=false branch too (forward() called directly, no variableGrads),
     // so keeping unconditionally inside forward() covers both. The
-    // reconstruction/KL breakdown values are read out as plain numbers here
-    // too (arraySync doesn't disturb the gradient tape), since only the
-    // combined scalar below is what tf.variableGrads differentiates.
+    // reconstruction/KL/continue breakdown values are read out as plain
+    // numbers here too (arraySync doesn't disturb the gradient tape), since
+    // only the combined scalar below is what tf.variableGrads differentiates.
     const forward = (): tf.Scalar => {
       const deterministic = this.cell.step(prevState, [action]);
       const priorDist = this.cell.prior(deterministic, { rng });
@@ -192,9 +213,12 @@ export class WorldModel {
       const predictedObservation = this.decoder.decode(deterministic, nextStochastic);
       const recon = reconstructionLoss(predictedObservation, observationTensor);
       const kl = klBalancedLoss(priorDist, posteriorDist, this.lossConfig).total;
+      const continueLogit = this.continueHead.predict(deterministic, nextStochastic);
+      const cont = continueLoss(continueLogit, continueTargetTensor);
       reconstructionLossValue = recon.arraySync() as number;
       klLossValue = kl.arraySync() as number;
-      return tf.add(recon, kl) as tf.Scalar;
+      continueLossValue = cont.arraySync() as number;
+      return tf.add(tf.add(recon, kl), cont) as tf.Scalar;
     };
 
     // The whole tf.variableGrads call (forward *and* backward) runs inside
@@ -224,12 +248,15 @@ export class WorldModel {
       // forward() threw before returning. this.state still equals prevState
       // (never reassigned below) and prevState's tensors were never
       // disposed, so the model stays usable. Only clean up what forward()
-      // itself created for this failed attempt: the observation tensor, and
-      // — if the throw happened after the tf.keep() calls above, e.g. from
-      // decoder.decode() or reconstructionLoss() — the two next-state
-      // tensors that already escaped the inner tf.tidy and would otherwise
-      // leak (nothing else will ever reference or dispose them).
+      // itself created for this failed attempt: the observation tensor, the
+      // continuation-target tensor (same outside-forward()-but-consumed-by-it
+      // lifecycle as observationTensor), and — if the throw happened after
+      // the tf.keep() calls above, e.g. from decoder.decode() or
+      // reconstructionLoss() — the two next-state tensors that already
+      // escaped the inner tf.tidy and would otherwise leak (nothing else
+      // will ever reference or dispose them).
       observationTensor.dispose();
+      continueTargetTensor.dispose();
       nextDeterministic?.dispose();
       nextStochastic?.dispose();
       throw err;
@@ -238,7 +265,8 @@ export class WorldModel {
     if (
       !Number.isFinite(lossValue) ||
       !Number.isFinite(reconstructionLossValue) ||
-      !Number.isFinite(klLossValue)
+      !Number.isFinite(klLossValue) ||
+      !Number.isFinite(continueLossValue)
     ) {
       // forward() returned normally — this isn't the catch block's "threw
       // before completing" case, it's a value that computed successfully
@@ -256,15 +284,22 @@ export class WorldModel {
       // it was and remains usable — and only what this forward() pass itself
       // allocated and tf.keep()'d gets disposed here.
       observationTensor.dispose();
+      continueTargetTensor.dispose();
       nextDeterministic!.dispose();
       nextStochastic!.dispose();
-      throw new WorldModelNaNError(lossValue, reconstructionLossValue, klLossValue);
+      throw new WorldModelNaNError(lossValue, reconstructionLossValue, klLossValue, continueLossValue);
     }
 
     observationTensor.dispose();
+    continueTargetTensor.dispose();
     prevState.deterministic.dispose();
     prevState.stochastic.dispose();
     this.state = { deterministic: nextDeterministic!, stochastic: nextStochastic! };
-    return { loss: lossValue, reconstructionLoss: reconstructionLossValue, klLoss: klLossValue };
+    return {
+      loss: lossValue,
+      reconstructionLoss: reconstructionLossValue,
+      klLoss: klLossValue,
+      continueLoss: continueLossValue,
+    };
   }
 }
