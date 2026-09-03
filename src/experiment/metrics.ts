@@ -8,13 +8,21 @@ import type { Observation } from "../env/types.ts";
  * one-step prediction error ... on newly collected transitions over the
  * following steps" (docs/proposals/0001-direct-nonstationarity-measurement.md).
  *
+ * Reads `reconstructionLoss + klLoss` from `EpisodeStepRecord.worldModelLossBreakdown`,
+ * **excluding `continueLoss`** — not the summed `worldModelLoss` total. Per PR #63's
+ * review (@SakkarinKt, 2026-09-02): since the continue head landed (docs/explainers/0011),
+ * `worldModelLoss` mixes in `continueLoss`, and that term doesn't cancel between conditions —
+ * post-freeze the frozen arm's continue term goes static while control's keeps training, and the
+ * target itself flips to `0` once inside the horizon window — so it would contaminate this
+ * instrument's comparison. See docs/explainers/0007's addendum.
+ *
  * `records` is expected in ascending `step` order, matching `runEpisode`'s
  * output (src/experiment/freeze.ts) — this is not re-sorted.
  *
  * Throws if `freezeStep` never occurs in `records` (e.g. set past the
  * episode's horizon — an empty result would otherwise silently look like a
  * valid zero-length series to a caller), or if `agentIndex`'s
- * `worldModelLoss` entry is `undefined` at any post-freeze step (no
+ * `worldModelLossBreakdown` entry is `undefined` at any post-freeze step (no
  * `WorldModel` was wired in for that agent for this episode — see
  * docs/explainers/0005-world-model-rollout-wiring.md).
  */
@@ -28,14 +36,14 @@ export function postFreezeLossSeries(
     throw new Error(`freezeStep ${freezeStep} never occurs in records (episode horizon too short)`);
   }
   return postFreeze.map((record) => {
-    const loss = record.worldModelLoss[agentIndex];
-    if (loss === undefined) {
+    const breakdown = record.worldModelLossBreakdown[agentIndex];
+    if (breakdown === undefined) {
       throw new Error(
-        `worldModelLoss[${agentIndex}] is undefined at step ${record.step} — ` +
+        `worldModelLossBreakdown[${agentIndex}] is undefined at step ${record.step} — ` +
           "no WorldModel was wired in for this agent for this episode",
       );
     }
-    return loss;
+    return breakdown.reconstructionLoss + breakdown.klLoss;
   });
 }
 

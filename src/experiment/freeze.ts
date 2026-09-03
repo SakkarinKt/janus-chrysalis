@@ -3,7 +3,10 @@ import { NUM_AGENTS } from "../env/types.ts";
 import type { Action, Observation } from "../env/types.ts";
 import type { Policy } from "../agent/policy.ts";
 import { Rng, deriveSeed } from "../env/rng.ts";
-import type { WorldModel } from "../model/worldModel.ts";
+import type { WorldModel, WorldModelStepResult } from "../model/worldModel.ts";
+
+/** `WorldModelStepResult` minus the summed `loss` — see `EpisodeStepRecord.worldModelLossBreakdown`. */
+export type WorldModelLossBreakdown = Omit<WorldModelStepResult, "loss">;
 
 /**
  * "intervention": only `frozenAgentIndex` stops updating at `freezeStep`;
@@ -44,16 +47,28 @@ export interface EpisodeStepRecord {
   /** Per-agent frozen status that gated this step's policy.update() call, indexed like actions. */
   frozen: boolean[];
   /**
-   * Per-agent world-model loss this step (`WorldModel.step()`'s return),
+   * Per-agent world-model loss this step (`WorldModel.step()`'s `.loss`),
    * `undefined` where `worldModels` wasn't given for that agent. Populated
    * every step regardless of frozen status — a frozen agent's world model
    * still gets evaluated (just not trained), per proposal 0001's "track the
    * frozen agent's... prediction error... over the following steps" —
    * raw per-step loss, not the freeze-vs-control diff itself (that's
    * `loop/GOAL.md` priority 4's metric plumbing, not computed here). See
-   * docs/explainers/0005-world-model-rollout-wiring.md.
+   * docs/explainers/0005-world-model-rollout-wiring.md. Since the continue
+   * head landed (docs/explainers/0011), this total includes `continueLoss` —
+   * use `worldModelLossBreakdown` below for a metric that must not (see
+   * docs/explainers/0007's addendum, PR #63 review, 2026-09-02).
    */
   worldModelLoss: (number | undefined)[];
+  /**
+   * The same per-agent `WorldModel.step()` call's `reconstructionLoss`/`klLoss`/`continueLoss`
+   * breakdown, `undefined` under the same condition as `worldModelLoss` above (same call, so the
+   * two arrays are `undefined` at exactly the same indices). Landed per PR #63's review
+   * (@SakkarinKt, 2026-09-02): `driftAttributableError` (via `postFreezeLossSeries`,
+   * `src/experiment/metrics.ts`) must read recon+KL alone, not the continue-loss-inflated total —
+   * see docs/explainers/0007's addendum for why.
+   */
+  worldModelLossBreakdown: (WorldModelLossBreakdown | undefined)[];
 }
 
 /**
@@ -143,10 +158,14 @@ export function runEpisode(
       }
     });
 
-    const worldModelLoss = observations.map(
-      (_, i) =>
-        worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i], result.done)
-          .loss,
+    const worldModelStepResults = observations.map((_, i) =>
+      worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i], result.done),
+    );
+    const worldModelLoss = worldModelStepResults.map((r) => r?.loss);
+    const worldModelLossBreakdown = worldModelStepResults.map((r) =>
+      r === undefined
+        ? undefined
+        : { reconstructionLoss: r.reconstructionLoss, klLoss: r.klLoss, continueLoss: r.continueLoss },
     );
 
     records.push({
@@ -158,6 +177,7 @@ export function runEpisode(
       done: result.done,
       frozen,
       worldModelLoss,
+      worldModelLossBreakdown,
     });
 
     observations = result.observations;

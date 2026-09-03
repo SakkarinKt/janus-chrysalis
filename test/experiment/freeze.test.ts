@@ -174,11 +174,12 @@ test("runEpisode: wrong number of policies throws", () => {
   assert.throws(() => runEpisode(env, [new RandomPolicy()], 5));
 });
 
-test("runEpisode: without worldModels, every record's worldModelLoss is an array of undefined (one entry per agent)", () => {
+test("runEpisode: without worldModels, every record's worldModelLoss and worldModelLossBreakdown are arrays of undefined (one entry per agent)", () => {
   const env = new CooperativeGridWorld({ seed: 7, horizon: 5 });
   const records = runEpisode(env, [new RandomPolicy(), new RandomPolicy()], 7);
   for (const record of records) {
     assert.deepEqual(record.worldModelLoss, [undefined, undefined]);
+    assert.deepEqual(record.worldModelLossBreakdown, [undefined, undefined]);
   }
 });
 
@@ -226,6 +227,22 @@ test(
         `expected a defined loss for the training agent at step ${record.step}`,
       );
       assert.ok(Number.isFinite(record.worldModelLoss[1]));
+
+      for (const agentIndex of [0, 1]) {
+        const breakdown = record.worldModelLossBreakdown[agentIndex];
+        if (breakdown === undefined) {
+          throw new Error(`expected a defined loss breakdown for agent ${agentIndex} at step ${record.step}`);
+        }
+        assert.ok(Number.isFinite(breakdown.reconstructionLoss));
+        assert.ok(Number.isFinite(breakdown.klLoss));
+        assert.ok(Number.isFinite(breakdown.continueLoss));
+        assert.ok(
+          Math.abs(
+            breakdown.reconstructionLoss + breakdown.klLoss + breakdown.continueLoss - record.worldModelLoss[agentIndex]!,
+          ) < 1e-6,
+          `expected breakdown to sum to worldModelLoss for agent ${agentIndex} at step ${record.step}`,
+        );
+      }
     }
 
     const frozenWeightsAfter = frozenWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
