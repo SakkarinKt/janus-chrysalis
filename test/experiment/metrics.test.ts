@@ -11,10 +11,18 @@ import {
 import type { EpisodeStepRecord } from "../../src/experiment/freeze.ts";
 import { Action } from "../../src/env/types.ts";
 
-/** Minimal fabricated records — only `step`/`frozen`/`worldModelLoss` matter to metrics.ts. */
+/**
+ * Minimal fabricated records — only `step`/`frozen`/`worldModelLossBreakdown` matter to
+ * metrics.ts. `reconKl` is each agent's `reconstructionLoss + klLoss` (what `postFreezeLossSeries`
+ * reads); a fixed non-zero `continueLoss` is baked into `worldModelLoss` (the total) so a
+ * regression to reading the total instead of the breakdown fails loudly rather than silently
+ * passing — see PR #63's review / docs/explainers/0007's addendum.
+ */
+const CONTINUE_LOSS_OFFSET = 1000;
+
 function record(
   step: number,
-  worldModelLoss: (number | undefined)[],
+  reconKl: (number | undefined)[],
   actions: Action[] = [Action.Stay, Action.Stay],
   nextObservations: number[][] = [[], []],
 ): EpisodeStepRecord {
@@ -26,11 +34,14 @@ function record(
     reward: 0,
     done: false,
     frozen: [false, false],
-    worldModelLoss,
+    worldModelLoss: reconKl.map((v) => (v === undefined ? undefined : v + CONTINUE_LOSS_OFFSET)),
+    worldModelLossBreakdown: reconKl.map((v) =>
+      v === undefined ? undefined : { reconstructionLoss: v, klLoss: 0, continueLoss: CONTINUE_LOSS_OFFSET },
+    ),
   };
 }
 
-test("postFreezeLossSeries: extracts one agent's loss for every step at or after freezeStep, in order", () => {
+test("postFreezeLossSeries: extracts one agent's reconstructionLoss+klLoss for every step at or after freezeStep, in order — excluding continueLoss", () => {
   const records = [
     record(1, [1.0, 2.0]),
     record(2, [1.1, 2.1]),
@@ -47,9 +58,12 @@ test("postFreezeLossSeries: throws when freezeStep never occurs in records", () 
   assert.throws(() => postFreezeLossSeries(records, 5, 0), /freezeStep 5 never occurs/);
 });
 
-test("postFreezeLossSeries: throws when the agent's worldModelLoss is undefined at a post-freeze step", () => {
+test("postFreezeLossSeries: throws when the agent's worldModelLossBreakdown is undefined at a post-freeze step", () => {
   const records = [record(1, [1.0, undefined]), record(2, [1.1, undefined])];
-  assert.throws(() => postFreezeLossSeries(records, 1, 1), /worldModelLoss\[1\] is undefined at step 1/);
+  assert.throws(
+    () => postFreezeLossSeries(records, 1, 1),
+    /worldModelLossBreakdown\[1\] is undefined at step 1/,
+  );
 });
 
 test("driftAttributableError: elementwise intervention-minus-control diff, aligned by steps-since-freeze", () => {

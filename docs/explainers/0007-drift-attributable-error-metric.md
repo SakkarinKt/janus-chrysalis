@@ -11,11 +11,13 @@ the primary metric — not yet the 3-seed instrument-validation runs that exerci
 
 Two functions:
 
-- `postFreezeLossSeries(records, freezeStep, agentIndex)` — pulls one agent's raw per-step
-  `worldModelLoss` (`EpisodeStepRecord`, `src/experiment/freeze.ts`) out of a completed episode's
-  records, restricted to steps at or after `freezeStep`, in order. This is "the frozen agent's
-  world-model prediction error... on newly collected transitions" from proposal `0001`'s
-  definition — for exactly one run (one condition, one seed).
+- `postFreezeLossSeries(records, freezeStep, agentIndex)` — pulls one agent's per-step
+  `reconstructionLoss + klLoss` (`EpisodeStepRecord.worldModelLossBreakdown`,
+  `src/experiment/freeze.ts`) out of a completed episode's records, restricted to steps at or
+  after `freezeStep`, in order. This is "the frozen agent's world-model prediction error... on
+  newly collected transitions" from proposal `0001`'s definition — for exactly one run (one
+  condition, one seed). See the addendum below for why this reads the recon+KL breakdown rather
+  than the summed `worldModelLoss` total.
 - `driftAttributableError(interventionLosses, controlLosses)` — the elementwise difference between
   two such series, one from an `"intervention"`-condition episode and one from a `"control"`-
   condition episode (both `src/experiment/freeze.ts`'s `FreezeConfig`). This is proposal `0001`'s
@@ -82,7 +84,53 @@ flagged as a "Decisions needed" item in this run's stand-up report rather than a
 `test/experiment/metrics.test.ts`: `postFreezeLossSeries` extracts the right slice in order for
 several `freezeStep`/`agentIndex` combinations (including `freezeStep` equal to the records' first
 step, i.e. the whole series); throws when `freezeStep` never occurs in the given records; throws
-when the requested agent's `worldModelLoss` is `undefined` at a post-freeze step.
+when the requested agent's `worldModelLossBreakdown` is `undefined` at a post-freeze step.
 `driftAttributableError`: elementwise diff on a rising-vs-flat pair; an all-zero result when both
 series are identical (the flat-control-vs-flat-control sanity case gate (a) cares about); throws
 on a length mismatch rather than truncating.
+
+## Addendum (2026-09-03): excluding `continueLoss` from the instrument's series
+
+`docs/explainers/0011-continue-termination-head.md` landed `WorldModel.step()`'s continue head
+(PR #63, merged 2026-09-02) after this metric already existed — its "what's deliberately not here
+yet" section named "feeding `drift-attributable-error`" as explicitly out of scope, but didn't flag
+that the continue head's loss term had already folded itself in by construction: `WorldModelStepResult.loss`
+(and therefore the old `EpisodeStepRecord.worldModelLoss` this module originally read) is
+`reconstructionLoss + klLoss + continueLoss`, unweighted, so once the continue head existed,
+`postFreezeLossSeries` started including it without any code in this file changing. PR #63's review
+(@SakkarinKt, 2026-09-02) caught this before any new experiment run collected data on the mixed
+number (the 114 manifests already committed all predate the continue head and are unaffected):
+
+> `freeze.ts:148` records only `.loss`, so `worldModelLoss` — and therefore `postFreezeLossSeries`
+> and `driftAttributableError` — now measures recon + KL + continue, where all 114 committed
+> manifests measured recon + KL. Pairing doesn't cancel it: post-freeze the frozen arm's continue
+> term is static while control's keeps training, and the target flips to 0 once inside the 38-step
+> window.
+
+Concretely: proposal `0001`'s Arm-A gridworld's `done` target is `currentStep >= horizon`
+(`src/env/gridworld.ts:62,65` — see `docs/explainers/0011`), so once a rollout is inside its final
+38 post-freeze steps (the milestone's horizon-75/freeze-37 design), *every* remaining step has
+`done: false` until the last one, i.e. the continue head's target is a near-constant `1` for the
+whole post-freeze window regardless of condition. `continueLoss` isn't therefore identical across
+control and intervention at a given steps-since-freeze offset: the frozen arm's continue head stops
+training at freeze (per `isFrozen`/`policy.update()` gating — the world model's `train` flag follows
+the same `frozen[i]`, `src/experiment/freeze.ts`), so its loss on that near-constant target drifts
+away from the still-training arm's, purely as an artifact of which arm keeps optimizing — not a
+signal proposal `0001` is trying to measure at all. Adding that artifact into the series a rising
+`driftAttributableError` is supposed to attribute to non-stationarity would contaminate the
+instrument with a second, unrelated source of drift.
+
+**Fix**: `EpisodeStepRecord` gains `worldModelLossBreakdown` (the per-agent
+`reconstructionLoss`/`klLoss`/`continueLoss` triple, `src/experiment/freeze.ts`), and
+`postFreezeLossSeries` now sums `reconstructionLoss + klLoss` from that breakdown instead of
+reading the summed `worldModelLoss` total — restoring the recon+KL-only series the 114 existing
+manifests were measured on. `worldModelLoss` (the total) is left in place on `EpisodeStepRecord`
+for other consumers (e.g. the bit-identical determinism checks in several `experiments/*/run.ts`
+scripts) since removing it would be an unrelated, unrequested change; it is simply no longer what
+this metric reads. `driftAttributableError` itself needed no change — it only ever consumes
+`postFreezeLossSeries`'s output, not `EpisodeStepRecord` directly.
+
+**Still open, not addressed by this fix**: whether the continue head's loss should be surfaced as
+*its own* tracked series (a genuine "does the frozen agent's termination-boundary prediction drift
+too" question) is a new-metric question, not this fix's — `docs/explainers/0011`'s "not part of
+this vertical slice" stance on using the continue head's output stands.
