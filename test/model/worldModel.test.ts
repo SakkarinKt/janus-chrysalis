@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import tf from "@tensorflow/tfjs-node";
 import { WorldModel, WorldModelNaNError } from "../../src/model/worldModel.ts";
+import { continueLoss } from "../../src/model/losses.ts";
 import { Action } from "../../src/env/types.ts";
 import { Rng } from "../../src/env/rng.ts";
 
@@ -179,6 +180,37 @@ test("WorldModel: repeated identical-input, identical-done training steps drive 
     wm.dispose();
   }
 });
+
+test(
+  "WorldModel: continueTargetTensor is exactly done ? 0 : 1 (worldModel.ts:184's polarity), pinned " +
+    "directly via a stubbed continueHead logit rather than the training-convergence proxy the test " +
+    "above uses — that proxy can't distinguish the documented polarity from its reverse, since it " +
+    "only checks that loss decreases toward whatever constant target is set, in both directions " +
+    "symmetrically. Carried forward from PR #63's review through the 2026-09-03/04 stand-ups " +
+    "(loop/GOAL.md priority 5).",
+  () => {
+    for (const [done, expectedTarget] of [[false, 1], [true, 0]] as const) {
+      const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
+      const rng = new Rng(1);
+      const stubLogit = tf.tensor2d([[10]]);
+      wm.continueHead.predict = () => stubLogit;
+
+      const result = wm.step(Action.Up, OBSERVATION, rng, false, done);
+      const expectedLoss = tf.tidy(
+        () => continueLoss(stubLogit, tf.tensor2d([[expectedTarget]])).arraySync() as number,
+      );
+      assert.ok(
+        Math.abs(result.continueLoss - expectedLoss) < 1e-4,
+        `done=${done}: expected continueLoss ${expectedLoss} (target ${expectedTarget} against the ` +
+          `stubbed logit), got ${result.continueLoss} — target polarity does not match ` +
+          "docs/explainers/0011's done ? 0 : 1 convention",
+      );
+
+      stubLogit.dispose();
+      wm.dispose();
+    }
+  },
+);
 
 test("WorldModel: reset() returns to a fresh zero-filled state and disposes the previous one", () => {
   const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE });
