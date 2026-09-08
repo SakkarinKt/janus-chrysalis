@@ -1,0 +1,48 @@
+{
+  "runId": "2026-09-08-seeded-arm-a-instrument-validation",
+  "seed": 1003,
+  "condition": "intervention",
+  "frozenAgentIndex": 0,
+  "freezeStep": 38,
+  "horizon": 75,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "qLearningConfig": {
+    "alpha": 0.1,
+    "gamma": 0.95,
+    "epsilon": 0.1
+  },
+  "weightInitSeeds": {
+    "agent0": 2654435922,
+    "agent1": 1013903513
+  },
+  "gitCommit": "8bdd2199de10294485b7e5300500932d42d9e63a",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-09-08T01:22:56.936Z",
+  "telemetryFile": "telemetry.jsonl",
+  "resultSummary": {
+    "seed": 1003,
+    "condition": "intervention",
+    "postFreezeSteps": 38,
+    "meanLoss": 1.8957709685752266,
+    "slopeLoss": 0.0021063410905795645
+  },
+  "findings": [
+    {
+      "severity": "NOTE",
+      "confidence": "self_checked, high confidence",
+      "summary": "This run threads WorldModelConfig.seed into each agent's WorldModel via deriveSeed(seed, agentIndex) — the same pattern 2026-08-13-paired-init-instrument-validation established, applied here to the arm-a-instrument-validation milestone's own naming/framing for the first time. weightInitDiagnostic below is the once-only reproducibility check: sameSeedIdentical:true / differentSeedDiffers:true is the pass condition, inverted from the 2026-08-12 baseline's identical:false (which predates WorldModelConfig.seed's existence).",
+      "weightInitDiagnostic": {
+        "claim": "buildWorldModels(seed, ...) called twice with the same seed draws identical per-agent initial weights; called with a different seed still draws different ones. sameSeedIdentical:true / differentSeedDiffers:true is the pass condition (inverted from 2026-08-12's unseeded identical:false).",
+        "diagnosticSeed": 4242,
+        "otherSeed": 4343,
+        "sameSeedIdentical": true,
+        "differentSeedDiffers": true
+      }
+    }
+  ]
+}
