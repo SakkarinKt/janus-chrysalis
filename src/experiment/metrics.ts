@@ -12,9 +12,10 @@ import type { Observation } from "../env/types.ts";
  * **excluding `continueLoss`** — not the summed `worldModelLoss` total. Per PR #63's
  * review (@SakkarinKt, 2026-09-02): since the continue head landed (docs/explainers/0011),
  * `worldModelLoss` mixes in `continueLoss`, and that term doesn't cancel between conditions —
- * post-freeze the frozen arm's continue term goes static while control's keeps training, and the
- * target itself flips to `0` once inside the horizon window — so it would contaminate this
- * instrument's comparison. See docs/explainers/0007's addendum.
+ * post-freeze the frozen arm's continue term goes static while control's keeps training, against a
+ * target that is near-constant `1` for the whole post-freeze window (it flips to `0` only at the
+ * episode's very last step) — so it would contaminate this instrument's comparison. See
+ * docs/explainers/0007's addendum.
  *
  * `records` is expected in ascending `step` order, matching `runEpisode`'s
  * output (src/experiment/freeze.ts) — this is not re-sorted.

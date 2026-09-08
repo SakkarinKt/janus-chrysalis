@@ -130,6 +130,17 @@ scripts) since removing it would be an unrelated, unrequested change; it is simp
 this metric reads. `driftAttributableError` itself needed no change — it only ever consumes
 `postFreezeLossSeries`'s output, not `EpisodeStepRecord` directly.
 
+**Scope of what this restores** (PR #64 review, @SakkarinKt, 2026-09-03): this fix restores the
+series' *composition* — the recon+KL formula, term for term — not its *comparability* to the
+pre-continue-head manifests' numbers. `WorldModel`'s `trainableVars` (`src/model/worldModel.ts`)
+includes `continueHead.trainableWeights()` alongside the RSSM cell's and decoder's, with no
+stop-gradient on the continue head's contribution, so since the continue head landed the shared
+trunk (`RSSMCell`) trains on `recon + kl + continue` jointly whenever `train` is true — `continueLoss`
+still shapes the cell's weights even though it's excluded from the series this metric reads. A
+post-#63 recon+KL number is therefore not numerically the same quantity as a pre-continue-head
+recon+KL number; only its formula matches. Whether that shared-gradient influence is itself a
+concern for proposal `0001`'s comparison is a new question, not this fix's.
+
 **Still open, not addressed by this fix**: whether the continue head's loss should be surfaced as
 *its own* tracked series (a genuine "does the frozen agent's termination-boundary prediction drift
 too" question) is a new-metric question, not this fix's — `docs/explainers/0011`'s "not part of
