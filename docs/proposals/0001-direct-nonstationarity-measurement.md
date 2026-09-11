@@ -1041,3 +1041,81 @@ this update only reports that the pre-registered condition for moving to it has 
 
 Full detail, all findings, and the raw per-seed manifests:
 `artifacts/2026-08-27-high-visibility-preregistered/`.
+
+**2026-09-08 update**: processing PR #67's review (@SakkarinKt, 2026-09-08 merge comment) "Next:
+priority 5, the seeded Arm-A re-run — derive the seed per agent at `run.ts:110-112` [because] both
+agents share one `config` today, so a single seed would hand Arm A's two independent agents
+identical init weights." This does **not** reopen the partner-visibility/radius axis closed
+2026-08-27 above — it revisits the *original*, still-uncited-as-fixed gap in the 2026-08-12
+baseline (lines 320-382 above): that milestone's own `buildWorldModels()` never got the seeding
+fix, unlike the side-experiment discussed next.
+
+**Self-check before claiming novelty**: this is not the first seeded per-agent Arm-A-style run.
+`experiments/2026-08-13-paired-init-instrument-validation/run.ts` (2026-08-13 update above)
+already derives per-agent seeds via `deriveSeed(seed, agentIndex)` and already reports a table
+under this exact 3-seed/`freezeStep`/dims design. Today's
+`experiments/2026-09-08-seeded-arm-a-instrument-validation/run.ts` reuses that same
+`buildWorldModels` pattern verbatim rather than inventing a new one. What still justifies running
+it again, three-plus weeks later: `WorldModel` has changed materially since 2026-08-13 —
+`ContinueHead` (PR #63, its own `deriveSeed(config.seed, 2)`-seeded weights), the `step()`
+NaN-halt invariant (PR #58), and `driftAttributableError` excluding `continueLoss` (PR #64) all
+postdate that run. So this is the first seeded Arm-A validation against the *current* `WorldModel`
+under the milestone's own `arm-a-instrument-validation` naming — new evidence, not a replay —
+recorded as an assumption (proceeding on this reasoning), not something decided silently: if a
+literal bit-for-bit reproduction of 2026-08-13's numbers is what was actually wanted instead, this
+run doesn't give that, and the fix is a one-line pointer to 2026-08-13's own script rather than a
+new file.
+
+Runner: `experiments/2026-09-08-seeded-arm-a-instrument-validation/run.ts`. Same `SEEDS`
+(1001/1002/1003), `freezeStep: 38`, `frozenAgentIndex: 0`, Arm-A dims as 2026-08-12/13. New dated
+directory — `artifacts/2026-08-12-arm-a-instrument-validation/` is untouched (`git diff --stat`
+against it is empty), matching the PR #67 review's instruction not to repeat the citation-breaking
+overwrite from earlier in that same review cycle.
+
+`weightInitDiagnostic` (`self_checked, high confidence` — direct output of this run, disposed
+tensors, first-4-values-per-tensor comparison): `sameSeedIdentical: true`, `differentSeedDiffers:
+true` for both agents — the **pass condition**, and the polarity the review asked for: inverted
+from the 2026-08-12 manifests' `identical: false` (which predates `WorldModelConfig.seed`
+existing at all).
+
+| seed | control slope | intervention slope | diffMean (intervention − control) |
+| --- | --- | --- | --- |
+| 1001 | +0.012016 | +0.013166 | −0.0938 |
+| 1002 | +0.065006 | +0.064400 | +0.0046 |
+| 1003 | +0.002106 | +0.002106 | +0.0000 |
+
+**Result: same inconclusive read as 2026-08-13, not newly resolved** (`self_checked, medium
+confidence` on the interpretation; `high confidence` on the numbers — direct output). Gate (a)/(b)
+status is unchanged from the 2026-08-13 update's verdict — still mixed-sign, still no consistent
+rising signal — and this run doesn't attempt to move that verdict; it refreshes the number against
+the current codebase. Two things worth flagging rather than silently noting:
+
+- **This run's `diffMean`s (`[−0.0938, +0.0046, +0.0000]`) are close to, but not identical to,
+  2026-08-13's (`[−0.0936, +0.0036, +0.0000]`)** despite an identical seeding scheme and identical
+  `SEEDS`/config — consistent with (not proof of) the "`WorldModel` changed since then" claim
+  above: `ContinueHead`'s added weights shift every downstream tensor's RNG consumption order
+  even holding the `RSSMCell`/decoder seeds constant, and the excluded `continueLoss` term changes
+  what `postFreezeLossSeries` sums. The qualitative pattern (mixed sign, small magnitude, seed
+  1003 exactly flat) is stable across both runs; the exact magnitudes are not, and shouldn't be
+  expected to be.
+- **Seed 1003's `diffMean: 0.0000` is the already-documented visibility-gate artifact, not a new
+  finding.** Verified directly against this run's own telemetry (`self_checked, high confidence`):
+  agent 1's actions differ from control on 23/38 post-freeze steps, but the frozen agent's own
+  observation's partner-visibility component (`relativeEntry`'s last 3 entries, `src/env/
+  gridworld.ts`) is `[0, 0, 0]` on all 38 of them — the partner never enters `viewRadius: 2` of the
+  frozen agent post-freeze in this trajectory, so there is nothing for the frozen agent's world
+  model to see differently regardless of what the partner does. This is the exact mechanism the
+  2026-08-21 update above worked out in detail for the paired-init harness
+  (`postFreezeObservationDivergenceCount`); today's run confirms it reproduces under Arm-A's
+  no-sharing per-agent-seeded harness too, using a different concrete derived seed than either
+  prior run. Not re-litigating the now-closed visibility axis — recorded here only because a
+  `diffMean` of exactly zero is easy to mis-read as "the freeze mechanism does nothing" rather
+  than "this seed's trajectory gave the instrument nothing to see."
+
+`npm test`: 169 total, 157 pass, 0 fail, 12 todo — unchanged; this run added no new `test/` files.
+`npm run typecheck:ratchet`: 44/44 baseline, unchanged. No edit to `loop/GOAL.md` or this file's
+"Current status" — priorities 3/4 remain fully landed; this update only refreshes a citation-
+adjacent number, it does not reopen or change any gate verdict.
+
+Full detail, both diagnostics, and the raw per-seed manifests:
+`artifacts/2026-09-08-seeded-arm-a-instrument-validation/`.
