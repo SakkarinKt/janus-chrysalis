@@ -1093,9 +1093,11 @@ the current codebase. Two things worth flagging rather than silently noting:
 - **This run's `diffMean`s (`[−0.0938, +0.0046, +0.0000]`) are close to, but not identical to,
   2026-08-13's (`[−0.0936, +0.0036, +0.0000]`)** despite an identical seeding scheme and identical
   `SEEDS`/config — consistent with (not proof of) the "`WorldModel` changed since then" claim
-  above: `ContinueHead`'s added weights shift every downstream tensor's RNG consumption order
-  even holding the `RSSMCell`/decoder seeds constant, and the excluded `continueLoss` term changes
-  what `postFreezeLossSeries` sums. The qualitative pattern (mixed sign, small magnitude, seed
+  above: `RSSMCell`/decoder/`ContinueHead` draw from independent `deriveSeed(seed, 0|1|2)` streams
+  (`worldModel.ts:104-111`), so `ContinueHead`'s added weights don't shift the others' RNG
+  consumption order — the actual driver is `continueLoss` entering the training total
+  (`worldModel.ts:163`), which changes the gradient step, and thus every downstream loss value,
+  even with RNG streams unchanged. The qualitative pattern (mixed sign, small magnitude, seed
   1003 exactly flat) is stable across both runs; the exact magnitudes are not, and shouldn't be
   expected to be.
 - **Seed 1003's `diffMean: 0.0000` is the already-documented visibility-gate artifact, not a new
