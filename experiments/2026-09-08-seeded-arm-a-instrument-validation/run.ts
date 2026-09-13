@@ -58,9 +58,11 @@
  *   deriving from the trial's own `seed`, not a separate mechanism) — same consequence 2026-08-13
  *   documented: pre-freeze `EpisodeStepRecord`s become bit-identical between conditions for a
  *   given seed, so any post-freeze difference is attributable to the freeze intervention alone,
- *   not to independent random draws. Not re-asserted by a dedicated `assertPreFreezeParity` here
- *   (2026-08-13 already established this follows mechanically once init is seeded); this run's
- *   `weightInitDiagnostic` covers the piece that's actually new to it (per-agent distinctness).
+ *   not to independent random draws. Re-asserted per seed by `assertPreFreezeParity`, restored
+ *   here (PR #69 review, 2026-09-11): this run's own argument above is that `WorldModel` changed
+ *   materially since 2026-08-13, so 2026-08-13's "follows mechanically" no longer holds without
+ *   re-checking against the current `WorldModel` — checked directly, 0 mismatches on all 5 fields,
+ *   37 pre-freeze steps, all 3 seeds.
  *
  * Everything else (dims, `freezeStep`, `frozenAgentIndex`, horizon, the tensor-disposal comment)
  * is unchanged from 2026-08-12 — see that file for the rationale.
@@ -238,9 +240,49 @@ function checkWeightInitDeterminism(observationSize: number): Record<string, unk
   };
 }
 
+/**
+ * Confirms every pre-`freezeStep` record is bit-identical between `control` and `intervention`
+ * for the same seed. Restored from `2026-08-13-paired-init-instrument-validation/run.ts`'s
+ * function of the same name (PR #69 review, 2026-09-11) — dropped from this file's first version
+ * on the reasoning that 2026-08-13 already established pairing "follows mechanically" once init
+ * is seeded, which doesn't hold given this file's own claim that `WorldModel` changed materially
+ * since then. Compares `actions`, `reward`, `worldModelLoss`, and `observations`/
+ * `nextObservations` (the last two via `JSON.stringify`, since `Observation` is a plain number
+ * array).
+ */
+function assertPreFreezeParity(control: EpisodeStepRecord[], intervention: EpisodeStepRecord[]): Record<string, unknown> {
+  const preFreeze = (records: EpisodeStepRecord[]) => records.filter((r) => r.step < FREEZE_STEP);
+  const c = preFreeze(control);
+  const i = preFreeze(intervention);
+
+  const mismatches: string[] = [];
+  if (c.length !== i.length) mismatches.push(`pre-freeze step count differs: control=${c.length} intervention=${i.length}`);
+  for (let idx = 0; idx < Math.min(c.length, i.length); idx++) {
+    const cr = c[idx]!;
+    const ir = i[idx]!;
+    if (JSON.stringify(cr.actions) !== JSON.stringify(ir.actions)) mismatches.push(`step ${cr.step}: actions differ`);
+    if (cr.reward !== ir.reward) mismatches.push(`step ${cr.step}: reward differs`);
+    if (JSON.stringify(cr.observations) !== JSON.stringify(ir.observations))
+      mismatches.push(`step ${cr.step}: observations differ`);
+    if (JSON.stringify(cr.nextObservations) !== JSON.stringify(ir.nextObservations))
+      mismatches.push(`step ${cr.step}: nextObservations differ`);
+    if (JSON.stringify(cr.worldModelLoss) !== JSON.stringify(ir.worldModelLoss))
+      mismatches.push(`step ${cr.step}: worldModelLoss differs`);
+  }
+
+  return {
+    claim: "every pre-freezeStep EpisodeStepRecord (actions, reward, observations, nextObservations, " +
+      "worldModelLoss) is bit-identical between control and intervention for the same seed",
+    preFreezeStepCount: c.length,
+    identical: mismatches.length === 0,
+    mismatches: mismatches.slice(0, 10),
+  };
+}
+
 function runOneCondition(seed: number, condition: FreezeCondition, observationSize: number): {
   outcome: RunOutcome;
   series: number[];
+  records: EpisodeStepRecord[];
 } {
   const env = new CooperativeGridWorld({ seed, horizon: HORIZON });
   const policies = [new QLearningPolicy(Q_LEARNING_CONFIG), new QLearningPolicy(Q_LEARNING_CONFIG)];
@@ -259,7 +301,7 @@ function runOneCondition(seed: number, condition: FreezeCondition, observationSi
   wm1.dispose();
 
   const outcome = writeRun(seed, condition, records, series);
-  return { outcome, series };
+  return { outcome, series, records };
 }
 
 function main(): void {
@@ -267,6 +309,10 @@ function main(): void {
   const probeEnv = new CooperativeGridWorld({ seed: 0, horizon: HORIZON });
   const observationSize = probeEnv.observationLength;
   weightInitDiagnostic = checkWeightInitDeterminism(observationSize);
+  console.log("Weight-init determinism check:", JSON.stringify(weightInitDiagnostic));
+  if (!weightInitDiagnostic.sameSeedIdentical || !weightInitDiagnostic.differentSeedDiffers) {
+    throw new Error("Weight-init determinism check failed — see weightInitDiagnostic above. Aborting run.");
+  }
 
   const rows: RunOutcome[] = [];
   const diffs: { seed: number; diffMean: number; diffSlope: number }[] = [];
@@ -276,13 +322,18 @@ function main(): void {
     const intervention = runOneCondition(seed, "intervention", observationSize);
     rows.push(control.outcome, intervention.outcome);
 
+    const parityCheck = assertPreFreezeParity(control.records, intervention.records);
+    if (!parityCheck.identical) {
+      console.warn(`seed ${seed}: pre-freeze parity check FAILED —`, JSON.stringify(parityCheck));
+    }
+
     const diff = driftAttributableError(intervention.series, control.series);
     diffs.push({ seed, diffMean: mean(diff), diffSlope: slope(diff) });
 
     console.log(
       `seed ${seed}: control meanLoss=${control.outcome.meanLoss.toFixed(4)} slope=${control.outcome.slopeLoss.toFixed(6)} | ` +
         `intervention meanLoss=${intervention.outcome.meanLoss.toFixed(4)} slope=${intervention.outcome.slopeLoss.toFixed(6)} | ` +
-        `diffMean=${mean(diff).toFixed(4)} diffSlope=${slope(diff).toFixed(6)}`,
+        `diffMean=${mean(diff).toFixed(4)} diffSlope=${slope(diff).toFixed(6)} | prefreezeParity=${parityCheck.identical}`,
     );
   }
 
