@@ -95,9 +95,11 @@ export class Critic {
 ```
 
 - **`logits`/`act` split mirrors `RSSMCell.prior`/`.posterior` vs. `sampleStraightThrough`**: a
-  pure differentiable forward (`logits`) separate from the sampling step, so imagination-rollout
-  code can choose how to route gradients through the sample (see open question 1 below) without
-  `Actor` itself hard-coding a REINFORCE-vs-reparameterized choice.
+  pure differentiable forward (`logits`) separate from the sampling step. Open question 1 below is
+  now decided (REINFORCE, not straight-through): `act()`'s sample itself needs no gradient path —
+  an ordinary categorical draw is sufficient — only `logits()`'s output must stay differentiable,
+  to compute `logπ(a)` for the sampled action. The split is kept regardless, since `logits()` alone
+  is also what the entropy bonus and the training loop's `logπ(a)` computation both read.
 - **`seed` derivation should follow `WorldModelConfig.seed`'s pattern exactly**
   (`src/model/worldModel.ts:104-111`): one `deriveSeed(config.seed, n)` salt per component
   (`Actor`, `Critic`, and per-agent on top of that, matching `RSSMCell`/`ObservationDecoder`/
@@ -117,24 +119,41 @@ Sketch only — pseudocode, not a function signature to implement, since several
 the not-yet-built reward head above:
 
 ```
-function imaginationTrainStep(worldModel, actor, critic, startStates: RSSMState[], horizon, rng, gamma, lambda):
+function imaginationTrainStep(worldModel, actor, critic, startStates: RSSMState[], horizon, rng, gamma, lambda, entropyCoefficient):
   states = startStates
-  rewards = []; values = []; continues = []
+  rewards = []; values = []; continues = []; logProbs = []; entropies = []
   for t in 0..horizon:
     values.push(critic.value(states.deterministic, states.stochastic))
-    actions = actor.act(states.deterministic, states.stochastic, rng)
+    actionLogits = actor.logits(states.deterministic, states.stochastic)
+    actions = actor.act(states.deterministic, states.stochastic, rng)          // ordinary categorical sample — no gradient path needed, see open question 1
+    logProbs.push(gatherLogProb(logSoftmax(actionLogits), actions))            // logπ(a_t|s_t), differentiable w.r.t. actor weights only
+    entropies.push(categoricalEntropy(actionLogits))                          // differentiable w.r.t. actor weights, for the entropy bonus
     nextDeterministic = worldModel.cell.step(states, actions)
     priorDist = worldModel.cell.prior(nextDeterministic, { rng })
     states = { deterministic: nextDeterministic, stochastic: priorDist.sample }
     rewards.push(rewardHead.predict(states.deterministic, states.stochastic))   // does not exist — see above
     continues.push(sigmoid(worldModel.continueHead.predict(states.deterministic, states.stochastic)))
   bootstrapValue = critic.value(states.deterministic, states.stochastic)   // stop-gradient
-  returns = computeLambdaReturns({ rewards, values, continues, bootstrapValue, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified
+  returns = computeLambdaReturns({ rewards, values, continues, bootstrapValue, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
+  advantage = returns.map((r, t) => r - values[t].dataSync()[0])   // R and V both constants: returns is already numeric, values[t] detached via dataSync — the baseline subtraction contributes no gradient
   criticLoss = meanSquaredError(values, stopGradient(returns))
-  actorLoss = -mean(returns)   // sign/estimator per open question 1
+  actorLoss = -mean(logProbs.map((lp, t) => lp.mul(advantage[t]))) - entropyCoefficient * mean(entropies)   // REINFORCE with a value baseline (open question 1, decided below) — replaces the earlier -mean(returns), which had zero gradient because returns never entered the tensor graph
   { grads } = tf.variableGrads(() => actorLoss + criticLoss, [...actor.trainableWeights(), ...critic.trainableWeights()])
   optimizer.applyGradients(grads)
 ```
+
+**Why REINFORCE, and not the earlier `-mean(returns)`**: `computeLambdaReturns` (`0012`) is pinned
+to `number[]` in, `number[]` out — `returns` is therefore never a tensor and carries no gradient
+path back to any weight. The original sketch's `actorLoss = -mean(returns)` was consequently a
+constant with respect to `actor.trainableWeights()`; `tf.variableGrads` would have found no path to
+those variables and silently dropped them from `grads` rather than erroring, while the critic loss
+(which only ever regressed `values`, a real tensor, onto the constant `returns`) was unaffected —
+the actor would never have trained. The corrected line above puts `logProbs` — the actor's own
+differentiable output — into the loss instead of the non-differentiable return itself, with
+`returns`/`values` entering only as detached numeric constants (the score-function estimator). This
+also decides open question 1 below: a numeric return target rules out the straight-through/
+reparameterized path this spec originally proposed, since there is no gradient signal downstream of
+`returns` for such a path to carry.
 
 Note what this rollout differentiates *through* without training: `worldModel.cell.step()`/
 `.prior()` (dynamics) and `worldModel.continueHead.predict()` (continuation) both sit inside the
@@ -191,21 +210,28 @@ blocking-dependency section above, until a reward head exists to make `imaginati
 actually runnable end-to-end — but every tensor set and assertion above is concrete now, so the
 implementation has a target rather than a restated goal name.
 
-## Open design questions (proposed, not decided — same status as `0012`'s four)
+## Open design questions (items 1–2 resolved below; 3–5 still proposed, not decided — same status
+as `0012`'s four)
 
-1. **Actor gradient estimator.** Proposed: reuse `src/model/rssm.ts`'s existing
-   `straightThroughEstimator`/`sampleHard` machinery for the actor's discrete action sample too
-   (categorical straight-through, same as the stochastic latent), rather than a REINFORCE/
-   score-function estimator — this project already has working, gradient-checked infrastructure
-   for exactly this "differentiable categorical sample" problem (`test/model/rssm.test.ts`'s
-   finite-difference check), and reusing it avoids standing up a second, untested gradient
-   estimator for what is mathematically the same operation. DreamerV3 itself mixes both
-   (reparameterized where the action space allows it, REINFORCE-with-baseline otherwise); this
-   environment's action space is small and discrete (`Action`, 5 values), well inside where the
-   straight-through path is expected to work, but this is a modeling choice, not forced by any
-   type above.
-2. **Imagination start states come from the real rollout's own in-memory `RSSMState`s, not from
-   `ReplayBuffer.sample()`.** `ReplayBufferEntry` (`0012`) stores a flat `Transition`
+1. **Actor gradient estimator — decided: REINFORCE with a value baseline, not straight-through.**
+   `0012` pins `computeLambdaReturns`'s contract as `number[]` in, `number[]` out
+   (`docs/explainers/0012-replay-buffer-lambda-returns-spec.md`) — a plain numeric return target,
+   not a tensor. Straight-through/reparameterized sampling only helps when a gradient can flow
+   *through* the sampled action back to whatever the loss is computed from; here the loss's other
+   operand (`returns`) never enters the tensor graph at all, so there is no path for a
+   reparameterized sample to complete regardless of how faithfully it approximates the categorical
+   distribution. The compatible construction is the score-function estimator: `actorLoss =
+   -logπ(a)·(R − V) + entropy`, with `R` (the λ-return) and `V` (the critic's value estimate,
+   detached) both treated as constants — exactly DreamerV3's own actor loss (`policy_loss =
+   -(logpi * sg(adv_normed) + ent_scale * entropy)`, arXiv:2301.04104). Reusing
+   `src/model/rssm.ts`'s straight-through machinery for the actor's action sample, as originally
+   proposed here, is ruled out under this spec's current dependencies; it would require `0012`'s
+   contract to change to a differentiable return, which is off the table absent a fresh
+   authorization from the human (this spec was explicitly told not to redesign `0012` — see "Why
+   now" above). `act()`'s sampling itself needs no gradient path under REINFORCE — only
+   `logits()`'s output must stay differentiable, to compute `logπ(a)` for the sampled action.
+2. **Imagination start states seed from `WorldModel.currentState` — accepted as v1, with a stated
+   cost, not left proposed.** `ReplayBufferEntry` (`0012`) stores a flat `Transition`
    (`observation`/`action`/`reward`/`nextObservation`/`done`) with no accompanying RSSM state —
    correct for its two named consumers (ablation 3's recency-weighted replay, ordinary
    off-policy experience replay), but a single sampled `Transition` cannot supply a valid
@@ -213,12 +239,15 @@ implementation has a target rather than a restated goal name.
    prefix (`RSSMCell.step`'s recurrence, `src/model/rssm.ts:166`), not recoverable from one
    transition's `observation` field in isolation, and `ReplayBuffer.sample()`'s uniform/
    recency-weighted draws are explicitly unordered single entries, not trajectory-contiguous.
-   Proposed resolution: seed imagination directly from `WorldModel.currentState`
-   (`src/model/worldModel.ts:143`) at points during or after a real rollout, keeping
-   `ReplayBuffer` scoped to what `0012` already specified it for — **not** proposing any change
-   to `ReplayBufferEntry`'s shape (an embedded-latent-state extension is the alternative DreamerV3
-   itself takes via its "online queue," per this run's search summary, but that would be
-   redesigning `0012`'s interface, which this spec was explicitly told not to do).
+   Seeding imagination directly from `WorldModel.currentState` (`src/model/worldModel.ts:143`)
+   sidesteps that gap without touching `ReplayBufferEntry`'s shape, and is accepted as this spec's
+   v1 approach. **Its cost, stated rather than deferred**: imagination gets exactly one start state
+   per real environment step — `currentState` at the moment `imaginationTrainStep` is called — with
+   no replayed experience feeding the actor-critic at all; every imagined rollout branches off the
+   agent's most recent real state, never off an earlier point in its history. A sequence-sampling
+   extension to `0012` (an embedded-latent-state entry, the alternative DreamerV3 itself takes via
+   its "online queue," per this run's search summary) would lift that limitation, but is a separate
+   authorization, not part of this spec's v1.
 3. **Reward head design** (blocking dependency above) — deliberately unresolved here.
 4. **Entropy coefficient default and schedule** — `ActorConfig.entropyCoefficient` is typed above
    as optional with no proposed value; same "engineering placeholder, not tuned" status
@@ -239,5 +268,6 @@ implementation has a target rather than a restated goal name.
 - **No wiring into `runEpisode`/`freeze.ts`.** Even once `Actor`/`Critic`/a reward head all
   exist, threading an actor-critic policy through the freeze mechanism and Arm-A's metric
   plumbing is its own future increment, out of this docs-only spec's scope.
-- **The five open design questions above are not decided** — flagged so a future implementation
-  and its review start from the same known-open list, matching `0012`'s own closing line.
+- **Open questions 3–5 above are not decided** (1–2 were resolved by the human's PR #74 review,
+  2026-09-13) — flagged so a future implementation and its review start from the same known-open
+  list, matching `0012`'s own closing line.
