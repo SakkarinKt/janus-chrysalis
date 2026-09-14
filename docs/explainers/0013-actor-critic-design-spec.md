@@ -210,8 +210,7 @@ blocking-dependency section above, until a reward head exists to make `imaginati
 actually runnable end-to-end — but every tensor set and assertion above is concrete now, so the
 implementation has a target rather than a restated goal name.
 
-## Open design questions (items 1–2 resolved below; 3–5 still proposed, not decided — same status
-as `0012`'s four)
+## Open design questions (items 1–2 resolved below; 3–5 still proposed, same status as `0012`'s four)
 
 1. **Actor gradient estimator — decided: REINFORCE with a value baseline, not straight-through.**
    `0012` pins `computeLambdaReturns`'s contract as `number[]` in, `number[]` out
