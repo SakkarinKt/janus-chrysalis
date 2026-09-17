@@ -40,11 +40,17 @@ be exercised end-to-end even once implemented. **This spec deliberately does not
 head** — it's a world-model addition (extends `WorldModel`, not `src/agent/`), out of a
 docs-only actor-critic increment's scope, and belongs as its own future explainer (a natural
 next `RSSM completion`-adjacent increment, same single-dense-layer minimalism as `ContinueHead`,
-reading `(h_t, z_t)`, predicting the shared scalar reward `StepResult.reward` — symlog-transformed
-per DreamerV3, since the gridworld's reward already includes a `collisionPenalty` term that isn't
-bounded to a friendly range for a bare linear head). Flagged here as the load-bearing prerequisite
-so the human's Gate G2 role-flip implementation doesn't discover it only after building `Actor`/
-`Critic` against this spec.
+reading `(h_t, z_t)`, predicting the shared scalar reward `StepResult.reward`). Flagged here as the
+load-bearing prerequisite so the human's Gate G2 role-flip implementation doesn't discover it only
+after building `Actor`/`Critic` against this spec.
+
+**Superseded by `docs/explainers/0014-reward-head-spec.md`**: the symlog-transformed guess this
+line originally made — reasoning that `collisionPenalty` left the reward unbounded to a friendly
+range for a bare linear head — is corrected by `0014`'s re-derivation from
+`computeReward()` (`src/env/gridworld.ts:145-157`): every config this project runs bounds the
+reward to a fixed `[-4.0, 0.0]`, a single-order-of-magnitude range that doesn't warrant `symlog`.
+`0014` proposes a plain linear head instead — see its "Reward magnitude" section for the full
+derivation. Read as superseded, not as a still-open recommendation.
 
 ## Architecture
 
@@ -119,24 +125,34 @@ Sketch only — pseudocode, not a function signature to implement, since several
 the not-yet-built reward head above:
 
 ```
-function imaginationTrainStep(worldModel, actor, critic, startStates: RSSMState[], horizon, rng, gamma, lambda, entropyCoefficient):
-  states = startStates
-  rewards = []; values = []; continues = []; logProbs = []; entropies = []
+function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, horizon, rng, gamma, lambda, entropyCoefficient):
+  // startState: a single (batch-1) RSSMState, matching WorldModel.currentState's actual
+  // construction (this.cell.initialState(1)) — not an array. See open question 2, amended below:
+  // imagination gets one start state per real step *and* batch size 1, not B parallel rollouts.
+  state = startState
+  valueTensors = []; continueTensors = []; logProbs = []; entropies = []
+  rewardsNumeric = []; valuesNumeric = []; continuesNumeric = []
   for t in 0..horizon:
-    values.push(critic.value(states.deterministic, states.stochastic))
-    actionLogits = actor.logits(states.deterministic, states.stochastic)
-    actions = actor.act(states.deterministic, states.stochastic, rng)          // ordinary categorical sample — no gradient path needed, see open question 1
-    logProbs.push(gatherLogProb(logSoftmax(actionLogits), actions))            // logπ(a_t|s_t), differentiable w.r.t. actor weights only
+    valueTensor = critic.value(state.deterministic, state.stochastic)
+    valueTensors.push(valueTensor)                        // kept as a tensor — feeds criticLoss's MSE below
+    valuesNumeric.push(valueTensor.dataSync()[0])          // detached numeric copy — feeds computeLambdaReturns only, which is number[] in/out per 0012
+    actionLogits = actor.logits(state.deterministic, state.stochastic)
+    action = actor.act(state.deterministic, state.stochastic, rng)          // ordinary categorical sample — no gradient path needed, see open question 1
+    logProbs.push(gatherLogProb(logSoftmax(actionLogits), action))            // logπ(a_t|s_t), differentiable w.r.t. actor weights only
     entropies.push(categoricalEntropy(actionLogits))                          // differentiable w.r.t. actor weights, for the entropy bonus
-    nextDeterministic = worldModel.cell.step(states, actions)
+    nextDeterministic = worldModel.cell.step(state, action)
     priorDist = worldModel.cell.prior(nextDeterministic, { rng })
-    states = { deterministic: nextDeterministic, stochastic: priorDist.sample }
-    rewards.push(rewardHead.predict(states.deterministic, states.stochastic))   // does not exist — see above
-    continues.push(sigmoid(worldModel.continueHead.predict(states.deterministic, states.stochastic)))
-  bootstrapValue = critic.value(states.deterministic, states.stochastic)   // stop-gradient
-  returns = computeLambdaReturns({ rewards, values, continues, bootstrapValue, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
-  advantage = returns.map((r, t) => r - values[t].dataSync()[0])   // R and V both constants: returns is already numeric, values[t] detached via dataSync — the baseline subtraction contributes no gradient
-  criticLoss = meanSquaredError(values, stopGradient(returns))
+    state = { deterministic: nextDeterministic, stochastic: priorDist.sample }
+    rewardsNumeric.push(rewardHead.predict(state.deterministic, state.stochastic).dataSync()[0])   // rewardHead does not exist — see above; numeric from the start, same reasoning as values — computeLambdaReturns never sees a reward tensor
+    continueTensor = sigmoid(worldModel.continueHead.predict(state.deterministic, state.stochastic))
+    continueTensors.push(continueTensor)                  // not otherwise used by any loss below, but kept alongside valueTensors for symmetry and any future continue-side loss term
+    continuesNumeric.push(continueTensor.dataSync()[0])    // detached numeric copy — feeds computeLambdaReturns only
+  bootstrapValueTensor = critic.value(state.deterministic, state.stochastic)
+  bootstrapValueNumeric = bootstrapValueTensor.dataSync()[0]   // detached — computeLambdaReturns only ever sees the numeric copy, same as every per-step value above
+  returns = computeLambdaReturns({ rewards: rewardsNumeric, values: valuesNumeric, continues: continuesNumeric, bootstrapValue: bootstrapValueNumeric, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
+  advantage = returns.map((r, t) => r - valuesNumeric[t])   // R and V both constants — the baseline subtraction contributes no gradient
+  returnsTensor = tf.tensor1d(returns)                      // returns is already constant by construction — stopGradient() would be a no-op on a number[], so build the tensor directly instead
+  criticLoss = meanSquaredError(tf.concat(valueTensors, 0), returnsTensor)   // valueTensors is what actually carries the critic's gradient; valuesNumeric above never does
   actorLoss = -mean(logProbs.map((lp, t) => lp.mul(advantage[t]))) - entropyCoefficient * mean(entropies)   // REINFORCE with a value baseline (open question 1, decided below) — replaces the earlier -mean(returns), which had zero gradient because returns never entered the tensor graph
   { grads } = tf.variableGrads(() => actorLoss + criticLoss, [...actor.trainableWeights(), ...critic.trainableWeights()])
   optimizer.applyGradients(grads)
@@ -210,7 +226,7 @@ blocking-dependency section above, until a reward head exists to make `imaginati
 actually runnable end-to-end — but every tensor set and assertion above is concrete now, so the
 implementation has a target rather than a restated goal name.
 
-## Open design questions (items 1–2 resolved below; 3–5 still proposed, same status as `0012`'s four)
+## Open design questions (items 1–2 resolved below; 3–6 still proposed — 3–5 same status as `0012`'s four, 6 added this revision)
 
 1. **Actor gradient estimator — decided: REINFORCE with a value baseline, not straight-through.**
    `0012` pins `computeLambdaReturns`'s contract as `number[]` in, `number[]` out
@@ -221,8 +237,12 @@ implementation has a target rather than a restated goal name.
    reparameterized sample to complete regardless of how faithfully it approximates the categorical
    distribution. The compatible construction is the score-function estimator: `actorLoss =
    -logπ(a)·(R − V) + entropy`, with `R` (the λ-return) and `V` (the critic's value estimate,
-   detached) both treated as constants — exactly DreamerV3's own actor loss (`policy_loss =
-   -(logpi * sg(adv_normed) + ent_scale * entropy)`, arXiv:2301.04104). Reusing
+   detached) both treated as constants — the same shape as DreamerV3's own actor loss
+   (`policy_loss = -(logpi * sg(adv_normed) + ent_scale * entropy)`, arXiv:2301.04104), **not an
+   exact match**: DreamerV3's `adv_normed` is the advantage divided by an exponentially-decayed
+   percentile range of returns, while the sketch above (training-procedure code block) uses the
+   raw advantage `R − V` unnormalized. See open question 6 below for why that omission is
+   deferred rather than closed here. Reusing
    `src/model/rssm.ts`'s straight-through machinery for the actor's action sample, as originally
    proposed here, is ruled out under this spec's current dependencies; it would require `0012`'s
    contract to change to a differentiable return, which is off the table absent a fresh
@@ -241,12 +261,19 @@ implementation has a target rather than a restated goal name.
    Seeding imagination directly from `WorldModel.currentState` (`src/model/worldModel.ts:143`)
    sidesteps that gap without touching `ReplayBufferEntry`'s shape, and is accepted as this spec's
    v1 approach. **Its cost, stated rather than deferred**: imagination gets exactly one start state
-   per real environment step — `currentState` at the moment `imaginationTrainStep` is called — with
-   no replayed experience feeding the actor-critic at all; every imagined rollout branches off the
-   agent's most recent real state, never off an earlier point in its history. A sequence-sampling
-   extension to `0012` (an embedded-latent-state entry, the alternative DreamerV3 itself takes via
-   its "online queue," per this run's search summary) would lift that limitation, but is a separate
-   authorization, not part of this spec's v1.
+   per real environment step **and batch size 1** — `currentState` at the moment
+   `imaginationTrainStep` is called, which is itself batch-1 by construction
+   (`this.cell.initialState(1)`, `src/model/worldModel.ts`) — with no replayed experience feeding
+   the actor-critic at all and no B-parallel imagined rollouts from a single call; every imagined
+   rollout branches off the agent's most recent real state alone, never off an earlier point in its
+   history and never batched with sibling rollouts. This is why the training-procedure sketch above
+   takes a single `startState: RSSMState`, not an array — an earlier draft of this spec typed it as
+   `RSSMState[]` while the body dereferenced it as one state, which this revision corrects rather
+   than leaves ambiguous. A sequence-sampling extension to `0012` (an embedded-latent-state entry,
+   the alternative DreamerV3 itself takes via its "online queue," per this run's search summary)
+   would lift the no-replay half of this limitation, but is a separate authorization, not part of
+   this spec's v1; true B-parallel batching is a distinct, also-unauthorized extension on top of
+   that.
 3. **Reward head design** (blocking dependency above) — deliberately unresolved here.
 4. **Entropy coefficient default and schedule** — `ActorConfig.entropyCoefficient` is typed above
    as optional with no proposed value; same "engineering placeholder, not tuned" status
@@ -255,6 +282,16 @@ implementation has a target rather than a restated goal name.
    with Arm A's independent-world-model topology, but not enforced by any type: nothing here
    prevents a shared `Actor`/`Critic` pair reading a concatenated multi-agent state instead, if
    the human's implementation judges that better once it exists.
+6. **Advantage normalization — deferred, not decided.** DreamerV3's actor loss normalizes the
+   advantage by an exponentially-decayed percentile range of recent returns (`sg(adv_normed)`,
+   arXiv:2301.04104); the training-procedure sketch above uses the raw advantage `R − V`
+   unnormalized (see open question 1's correction above). Given `docs/explainers/0014`'s
+   derivation that this environment's reward is already a fixed, single-order-of-magnitude range
+   (`[-4.0, 0.0]` under every config this project runs, not the wide or shifting return spread
+   percentile normalization exists to tame), omitting it is plausible but not verified — left open
+   pending either a measured argument (return-magnitude variance across an actual imagined
+   rollout) or a decision to accept the raw advantage permanently once `RewardHead` makes that
+   measurement possible.
 
 ## What's deliberately not here
 
@@ -267,6 +304,7 @@ implementation has a target rather than a restated goal name.
 - **No wiring into `runEpisode`/`freeze.ts`.** Even once `Actor`/`Critic`/a reward head all
   exist, threading an actor-critic policy through the freeze mechanism and Arm-A's metric
   plumbing is its own future increment, out of this docs-only spec's scope.
-- **Open questions 3–5 above are not decided** (1–2 were resolved by the human's PR #74 review,
-  2026-09-13) — flagged so a future implementation and its review start from the same known-open
-  list, matching `0012`'s own closing line.
+- **Open questions 3–6 above are not decided** (1–2 were resolved by the human's PR #74 review,
+  2026-09-13; 6 was added by the human's 2026-09-16 PR #74 review) — flagged so a future
+  implementation and its review start from the same known-open list, matching `0012`'s own closing
+  line.
