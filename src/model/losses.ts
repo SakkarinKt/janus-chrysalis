@@ -98,6 +98,31 @@ export function continueLoss(logit: tf.Tensor2D, target: tf.Tensor2D): tf.Scalar
   return tf.tidy(() => tf.losses.sigmoidCrossEntropy(target, logit) as tf.Scalar);
 }
 
+/**
+ * Reward-prediction loss — mean squared error between `predicted`/`target`
+ * (each `[batch, 1]`), each divided by `rewardScale` first. The same
+ * simplification `reconstructionLoss` already uses (negative log-likelihood
+ * under a unit-variance isotropic Gaussian, up to an additive constant and a
+ * `0.5` factor), specialized to a scalar target instead of
+ * `[batch, observationSize]`, plus the `rewardScale` normalization: without
+ * it, an unweighted reward-MSE term (raw target range `[-4.0, 0.0]` under
+ * `DEFAULT_CONFIG`, prediction near `0` at init) starts one to two orders of
+ * magnitude above `continueLoss`/`reconstructionLoss` and would dominate the
+ * world-model gradient early in training — see
+ * docs/explainers/0014-reward-head-spec.md's "Loss magnitude" section for the
+ * full derivation and confidence tag. Not implemented by calling
+ * `reconstructionLoss` with `observationSize: 1`: kept as a distinct named
+ * function per this codebase's existing one-loss-per-head convention
+ * (`reconstructionLoss`, `continueLoss`, now `rewardLoss`), so a future
+ * change to one head's loss shape doesn't silently reach into another's.
+ */
+export function rewardLoss(predicted: tf.Tensor2D, target: tf.Tensor2D, rewardScale: number): tf.Scalar {
+  return tf.tidy(() => {
+    const scale = tf.scalar(rewardScale);
+    return tf.mean(tf.square(tf.sub(tf.div(predicted, scale), tf.div(target, scale)))) as tf.Scalar;
+  });
+}
+
 export interface KLBalancedLossConfig {
   /** Nats floor each of dynLoss/repLoss is clipped to, per batch row, before the batch mean. Default 1. */
   freeBits?: number;

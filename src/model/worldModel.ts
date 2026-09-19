@@ -1,10 +1,11 @@
 import tf from "@tensorflow/tfjs-node";
 import { RSSMCell } from "./rssm.ts";
 import type { RSSMConfig, RSSMState } from "./rssm.ts";
-import { klBalancedLoss, reconstructionLoss, continueLoss } from "./losses.ts";
+import { klBalancedLoss, reconstructionLoss, continueLoss, rewardLoss } from "./losses.ts";
 import type { KLBalancedLossConfig } from "./losses.ts";
 import { ObservationDecoder } from "./decoder.ts";
 import { ContinueHead } from "./continueHead.ts";
+import { RewardHead } from "./rewardHead.ts";
 import { Action } from "../env/types.ts";
 import type { Observation } from "../env/types.ts";
 import { deriveSeed, Rng } from "../env/rng.ts";
@@ -13,6 +14,18 @@ export interface WorldModelConfig {
   rssm: RSSMConfig;
   /** Fixed length of this environment's `Observation` vector — see `src/env/types.ts`. */
   observationSize: number;
+  /**
+   * Normalizes `rewardLoss`'s squared error so the reward-prediction term
+   * starts in the same order-of-magnitude neighborhood as
+   * `continueLoss`/`reconstructionLoss` rather than dominating them — see
+   * docs/explainers/0014-reward-head-spec.md's "Loss magnitude" section.
+   * Required, not defaulted: there's no environment-independent default that
+   * doesn't silently misnormalize a different config's reward range. The
+   * caller derives it from the environment, e.g.
+   * `CooperativeGridWorld.rewardScale` (`src/env/gridworld.ts`) —
+   * `src/model/` deliberately does not import `GridWorldConfig` itself.
+   */
+  rewardScale: number;
   /** Passed through to `klBalancedLoss` every step. Default: that function's own defaults. */
   lossConfig?: KLBalancedLossConfig;
   /**
@@ -36,7 +49,7 @@ export interface WorldModelConfig {
 
 /**
  * Thrown by `WorldModel.step()` when the computed loss, or any of its
- * `reconstructionLoss`/`klLoss`/`continueLoss` components, is non-finite
+ * `reconstructionLoss`/`klLoss`/`continueLoss`/`rewardLoss` components, is non-finite
  * (`NaN` or `±Infinity`) — the "NaN → graceful halt" invariant
  * (`loop/GOAL.md` priority 5). See `docs/explainers/0009-worldmodel-nan-halt.md`
  * for what this does and doesn't guarantee: in particular, for a `train: true`
@@ -49,28 +62,36 @@ export class WorldModelNaNError extends Error {
   readonly reconstructionLoss: number;
   readonly klLoss: number;
   readonly continueLoss: number;
+  readonly rewardLoss: number;
 
   // No TS parameter-property shorthand: Node runs these .ts files with
   // type-stripping only (no real compile step, package.json's "test"
   // script), and `constructor(readonly x: number)` isn't valid stripped
   // JavaScript — same constraint `src/env/types.ts`'s `Action` const-object
   // comment documents for `enum`.
-  constructor(loss: number, reconstructionLoss: number, klLoss: number, continueLoss: number) {
+  constructor(
+    loss: number,
+    reconstructionLoss: number,
+    klLoss: number,
+    continueLoss: number,
+    rewardLoss: number,
+  ) {
     super(
       `WorldModel.step(): non-finite loss (loss=${loss}, reconstructionLoss=${reconstructionLoss}, ` +
-        `klLoss=${klLoss}, continueLoss=${continueLoss}) — halting rather than risk silently ` +
-        `continuing on a corrupted state.`,
+        `klLoss=${klLoss}, continueLoss=${continueLoss}, rewardLoss=${rewardLoss}) — halting rather ` +
+        `than risk silently continuing on a corrupted state.`,
     );
     this.name = "WorldModelNaNError";
     this.loss = loss;
     this.reconstructionLoss = reconstructionLoss;
     this.klLoss = klLoss;
     this.continueLoss = continueLoss;
+    this.rewardLoss = rewardLoss;
   }
 }
 
 export interface WorldModelStepResult {
-  /** reconstructionLoss + klBalancedLoss's `total` (recon + dyn+rep) + continueLoss, as a plain number. */
+  /** reconstructionLoss + klBalancedLoss's `total` (recon + dyn+rep) + continueLoss + rewardLoss, as a plain number. */
   loss: number;
   /** This step's reconstructionLoss alone, as a plain number — see docs/explainers/0006. */
   reconstructionLoss: number;
@@ -78,23 +99,28 @@ export interface WorldModelStepResult {
   klLoss: number;
   /** This step's continueLoss alone, as a plain number — see docs/explainers/0011. */
   continueLoss: number;
+  /** This step's rewardLoss alone, as a plain number — see docs/explainers/0014. */
+  rewardLoss: number;
 }
 
 /**
- * Wraps one `RSSMCell`, one `ObservationDecoder`, and one `ContinueHead` with
- * a shared optimizer and the single persistent `RSSMState` a rollout's
- * recurrence carries across an episode — proposal `0001` Arm-A's per-agent
- * world model. See docs/explainers/0005-world-model-rollout-wiring.md for the
- * rollout-wiring design (why `step()` always advances state but only
+ * Wraps one `RSSMCell`, one `ObservationDecoder`, one `ContinueHead`, and one
+ * `RewardHead` with a shared optimizer and the single persistent `RSSMState`
+ * a rollout's recurrence carries across an episode — proposal `0001` Arm-A's
+ * per-agent world model. See docs/explainers/0005-world-model-rollout-wiring.md
+ * for the rollout-wiring design (why `step()` always advances state but only
  * sometimes trains, the tensor-lifecycle contract with `RSSMCell`, and the
  * BPTT-horizon-1 amendment), docs/explainers/0006-observation-reconstruction-loss.md
- * for the decoder/reconstruction-loss piece, and
- * docs/explainers/0011-continue-termination-head.md for the continuation head.
+ * for the decoder/reconstruction-loss piece, docs/explainers/0011-continue-termination-head.md
+ * for the continuation head, and docs/explainers/0014-reward-head-spec.md for
+ * the reward head.
  */
 export class WorldModel {
   readonly cell: RSSMCell;
   readonly decoder: ObservationDecoder;
   readonly continueHead: ContinueHead;
+  readonly rewardHead: RewardHead;
+  private readonly rewardScale: number;
   private readonly optimizer: tf.Optimizer;
   private readonly lossConfig: KLBalancedLossConfig;
   private readonly trainableVars: tf.Variable[];
@@ -110,6 +136,10 @@ export class WorldModel {
     this.continueHead = new ContinueHead({
       ...(config.seed !== undefined && { seed: deriveSeed(config.seed, 2) }),
     });
+    this.rewardHead = new RewardHead({
+      ...(config.seed !== undefined && { seed: deriveSeed(config.seed, 3) }),
+    });
+    this.rewardScale = config.rewardScale;
     this.lossConfig = config.lossConfig ?? {};
     this.optimizer = tf.train.adam(config.learningRate ?? 1e-3);
     this.state = this.cell.initialState(1);
@@ -131,11 +161,13 @@ export class WorldModel {
       );
       this.decoder.decode(deterministic, posterior.sample);
       this.continueHead.predict(deterministic, posterior.sample);
+      this.rewardHead.predict(deterministic, posterior.sample);
     });
     this.trainableVars = [
       ...this.cell.trainableWeights(),
       ...this.decoder.trainableWeights(),
       ...this.continueHead.trainableWeights(),
+      ...this.rewardHead.trainableWeights(),
     ];
   }
 
@@ -160,10 +192,15 @@ export class WorldModel {
    * Advances one real transition: h_t = step(prevState, action); z_t ~
    * posterior(h_t, observation); predicted_o_t = decoder(h_t, z_t); loss =
    * reconstructionLoss(predicted_o_t, o_t) + klBalancedLoss(prior(h_t), that
-   * posterior).total + continueLoss(continueHead(h_t, z_t), target) — the
-   * last term added by docs/explainers/0011 (`done` is this transition's
+   * posterior).total + continueLoss(continueHead(h_t, z_t), target) +
+   * rewardLoss(rewardHead(h_t, z_t), reward, rewardScale) — the continueLoss
+   * term added by docs/explainers/0011 (`done` is this transition's
    * env-reported outcome, `StepResult.done` polarity: target is `0` when
-   * `done`, `1` otherwise). When `train` is true, applies one Adam step
+   * `done`, `1` otherwise), the rewardLoss term by docs/explainers/0014
+   * (`reward` is `StepResult.reward`, predicted from the post-transition
+   * state — same "the state that has 'seen' this transition is the state
+   * whose head should be asked to predict it" reasoning 0011 gives for
+   * `continueHead`, applying identically here). When `train` is true, applies one Adam step
    * toward `loss` before advancing; when false, still advances state and
    * returns `loss` (for post-freeze prediction-error tracking, per proposal
    * 0001) but leaves weights untouched. On success, disposes the previous
@@ -178,16 +215,25 @@ export class WorldModel {
    * left `this.state` — still pointing at `prevState`, since it's only
    * reassigned below on success — referencing disposed tensors).
    */
-  step(action: Action, observation: Observation, rng: Rng, train: boolean, done: boolean): WorldModelStepResult {
+  step(
+    action: Action,
+    observation: Observation,
+    rng: Rng,
+    train: boolean,
+    done: boolean,
+    reward: number,
+  ): WorldModelStepResult {
     const prevState = this.state;
     const observationTensor = tf.tensor2d([observation]);
     const continueTargetTensor = tf.tensor2d([[done ? 0 : 1]]);
+    const rewardTargetTensor = tf.tensor2d([[reward]]);
 
     let nextDeterministic: tf.Tensor2D | undefined;
     let nextStochastic: tf.Tensor2D | undefined;
     let reconstructionLossValue!: number;
     let klLossValue!: number;
     let continueLossValue!: number;
+    let rewardLossValue!: number;
 
     // tf.variableGrads(f, ...) internally wraps `f` in its own tf.tidy
     // (tfjs's Engine.gradients: `this.tidy('forward', f)`) and disposes
@@ -215,10 +261,13 @@ export class WorldModel {
       const kl = klBalancedLoss(priorDist, posteriorDist, this.lossConfig).total;
       const continueLogit = this.continueHead.predict(deterministic, nextStochastic);
       const cont = continueLoss(continueLogit, continueTargetTensor);
+      const rewardPrediction = this.rewardHead.predict(deterministic, nextStochastic);
+      const rew = rewardLoss(rewardPrediction, rewardTargetTensor, this.rewardScale);
       reconstructionLossValue = recon.arraySync() as number;
       klLossValue = kl.arraySync() as number;
       continueLossValue = cont.arraySync() as number;
-      return tf.add(tf.add(recon, kl), cont) as tf.Scalar;
+      rewardLossValue = rew.arraySync() as number;
+      return tf.add(tf.add(tf.add(recon, kl), cont), rew) as tf.Scalar;
     };
 
     // The whole tf.variableGrads call (forward *and* backward) runs inside
@@ -257,6 +306,7 @@ export class WorldModel {
       // will ever reference or dispose them).
       observationTensor.dispose();
       continueTargetTensor.dispose();
+      rewardTargetTensor.dispose();
       nextDeterministic?.dispose();
       nextStochastic?.dispose();
       throw err;
@@ -266,7 +316,8 @@ export class WorldModel {
       !Number.isFinite(lossValue) ||
       !Number.isFinite(reconstructionLossValue) ||
       !Number.isFinite(klLossValue) ||
-      !Number.isFinite(continueLossValue)
+      !Number.isFinite(continueLossValue) ||
+      !Number.isFinite(rewardLossValue)
     ) {
       // forward() returned normally — this isn't the catch block's "threw
       // before completing" case, it's a value that computed successfully
@@ -285,13 +336,21 @@ export class WorldModel {
       // allocated and tf.keep()'d gets disposed here.
       observationTensor.dispose();
       continueTargetTensor.dispose();
+      rewardTargetTensor.dispose();
       nextDeterministic!.dispose();
       nextStochastic!.dispose();
-      throw new WorldModelNaNError(lossValue, reconstructionLossValue, klLossValue, continueLossValue);
+      throw new WorldModelNaNError(
+        lossValue,
+        reconstructionLossValue,
+        klLossValue,
+        continueLossValue,
+        rewardLossValue,
+      );
     }
 
     observationTensor.dispose();
     continueTargetTensor.dispose();
+    rewardTargetTensor.dispose();
     prevState.deterministic.dispose();
     prevState.stochastic.dispose();
     this.state = { deterministic: nextDeterministic!, stochastic: nextStochastic! };
@@ -300,6 +359,7 @@ export class WorldModel {
       reconstructionLoss: reconstructionLossValue,
       klLoss: klLossValue,
       continueLoss: continueLossValue,
+      rewardLoss: rewardLossValue,
     };
   }
 }
