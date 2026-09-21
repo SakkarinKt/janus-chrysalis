@@ -36,7 +36,9 @@ function record(
     frozen: [false, false],
     worldModelLoss: reconKl.map((v) => (v === undefined ? undefined : v + CONTINUE_LOSS_OFFSET)),
     worldModelLossBreakdown: reconKl.map((v) =>
-      v === undefined ? undefined : { reconstructionLoss: v, klLoss: 0, continueLoss: CONTINUE_LOSS_OFFSET },
+      v === undefined
+        ? undefined
+        : { reconstructionLoss: v, klLoss: 0, continueLoss: CONTINUE_LOSS_OFFSET, rewardLoss: 0 },
     ),
   };
 }

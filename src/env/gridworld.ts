@@ -37,6 +37,22 @@ export class CooperativeGridWorld {
     return 2 + this.config.numLandmarks * 3 + 3;
   }
 
+  /**
+   * Upper bound on `|computeReward()|` for this config — worst case is every
+   * landmark at the grid's diagonal-opposite corner from the covering agent
+   * (`coverage = numLandmarks * maxManhattanDistance`, `maxManhattanDistance`
+   * in a `gridSize x gridSize` grid, indices `0..gridSize-1`, is
+   * `2 * (gridSize - 1)`) plus `collisionPenalty`. Exposed here rather than
+   * inlined in `src/model/` so that half doesn't need to import
+   * `GridWorldConfig` — see docs/explainers/0014-reward-head-spec.md's
+   * "Reward magnitude" section, which this reproduces exactly (not just
+   * approximately).
+   */
+  get rewardScale(): number {
+    const { numLandmarks, gridSize, collisionPenalty } = this.config;
+    return (numLandmarks * (2 * (gridSize - 1))) / gridSize + collisionPenalty;
+  }
+
   reset(): ResetResult {
     this.rng = new Rng(this.config.seed);
     this.currentStep = 0;

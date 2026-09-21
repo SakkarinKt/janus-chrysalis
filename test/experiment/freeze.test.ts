@@ -198,11 +198,13 @@ test(
     const frozenWorldModel = new WorldModel({
       rssm: WORLD_MODEL_CONFIG,
       observationSize: env.observationLength,
+      rewardScale: env.rewardScale,
       lossConfig: { freeBits: 0 },
     });
     const trainingWorldModel = new WorldModel({
       rssm: WORLD_MODEL_CONFIG,
       observationSize: env.observationLength,
+      rewardScale: env.rewardScale,
       lossConfig: { freeBits: 0 },
     });
     const frozenWeightsBefore = frozenWorldModel.cell.trainableWeights().map((w) => Array.from(w.dataSync()));
@@ -236,9 +238,14 @@ test(
         assert.ok(Number.isFinite(breakdown.reconstructionLoss));
         assert.ok(Number.isFinite(breakdown.klLoss));
         assert.ok(Number.isFinite(breakdown.continueLoss));
+        assert.ok(Number.isFinite(breakdown.rewardLoss));
         assert.ok(
           Math.abs(
-            breakdown.reconstructionLoss + breakdown.klLoss + breakdown.continueLoss - record.worldModelLoss[agentIndex]!,
+            breakdown.reconstructionLoss +
+              breakdown.klLoss +
+              breakdown.continueLoss +
+              breakdown.rewardLoss -
+              record.worldModelLoss[agentIndex]!,
           ) < 1e-6,
           `expected breakdown to sum to worldModelLoss for agent ${agentIndex} at step ${record.step}`,
         );
