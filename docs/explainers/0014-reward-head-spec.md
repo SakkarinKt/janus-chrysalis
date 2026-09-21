@@ -157,8 +157,12 @@ per-call), same lifecycle as any other config-derived constant already closed ov
   for adding a DreamerV3 loss term without inventing a new coefficient, applied a second time), but
   unlike `0011`, the term isn't left at a raw, unweighted scale: `rewardScale`'s normalization
   (decided above) is what keeps coefficient 1 from being the same thing as "unweighted" in
-  practice. `rewardScale` is computed once from the constructor's `GridworldConfig` and closed over
-  by `step()`, not recomputed per call.
+  practice. What the normalization *is*, stated plainly rather than left implicit in "coefficient
+  1": dividing both `predicted` and `target` by `rewardScale` before squaring is identical, in
+  gradient, to applying coefficient `1/rewardScale²` to the raw (unnormalized) MSE —
+  `1/4.0² = 1/16 = 0.0625` at `DEFAULT_CONFIG` — not literally coefficient 1 on anything (PR #74
+  review, 2026-09-18). `rewardScale` is computed once from the constructor's `GridworldConfig` and
+  closed over by `step()`, not recomputed per call.
 - **`WorldModelStepResult`** gains `rewardLoss: number`. **`WorldModelNaNError`** gains a
   `rewardLoss: number` field, and the non-finite check that throws it now also covers it — same
   "any component going non-finite compounds into every later step" reasoning as the existing
