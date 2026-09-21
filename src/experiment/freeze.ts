@@ -55,18 +55,23 @@ export interface EpisodeStepRecord {
    * raw per-step loss, not the freeze-vs-control diff itself (that's
    * `loop/GOAL.md` priority 4's metric plumbing, not computed here). See
    * docs/explainers/0005-world-model-rollout-wiring.md. Since the continue
-   * head landed (docs/explainers/0011), this total includes `continueLoss` —
-   * use `worldModelLossBreakdown` below for a metric that must not (see
-   * docs/explainers/0007's addendum, PR #63 review, 2026-09-02).
+   * head landed (docs/explainers/0011) and now the reward head
+   * (docs/explainers/0014), this total includes `continueLoss` and
+   * `rewardLoss` — use `worldModelLossBreakdown` below for a metric that
+   * must not (see docs/explainers/0007's addendum, PR #63 review, 2026-09-02).
    */
   worldModelLoss: (number | undefined)[];
   /**
-   * The same per-agent `WorldModel.step()` call's `reconstructionLoss`/`klLoss`/`continueLoss`
-   * breakdown, `undefined` under the same condition as `worldModelLoss` above (same call, so the
-   * two arrays are `undefined` at exactly the same indices). Landed per PR #63's review
-   * (@SakkarinKt, 2026-09-02): `driftAttributableError` (via `postFreezeLossSeries`,
-   * `src/experiment/metrics.ts`) must read recon+KL alone, not the continue-loss-inflated total —
-   * see docs/explainers/0007's addendum for why.
+   * The same per-agent `WorldModel.step()` call's
+   * `reconstructionLoss`/`klLoss`/`continueLoss`/`rewardLoss` breakdown,
+   * `undefined` under the same condition as `worldModelLoss` above (same
+   * call, so the two arrays are `undefined` at exactly the same indices).
+   * Landed per PR #63's review (@SakkarinKt, 2026-09-02): `driftAttributableError`
+   * (via `postFreezeLossSeries`, `src/experiment/metrics.ts`) must read
+   * recon+KL alone, not the continue-loss-inflated (now also reward-loss-
+   * inflated) total — see docs/explainers/0007's addendum for why; that
+   * reasoning applies identically to `rewardLoss` since it's added to the
+   * same total the same way.
    */
   worldModelLossBreakdown: (WorldModelLossBreakdown | undefined)[];
 }
@@ -159,13 +164,25 @@ export function runEpisode(
     });
 
     const worldModelStepResults = observations.map((_, i) =>
-      worldModels?.[i]?.step(actions[i], result.observations[i], worldModelRngs![i], !frozen[i], result.done),
+      worldModels?.[i]?.step(
+        actions[i],
+        result.observations[i],
+        worldModelRngs![i],
+        !frozen[i],
+        result.done,
+        result.reward,
+      ),
     );
     const worldModelLoss = worldModelStepResults.map((r) => r?.loss);
     const worldModelLossBreakdown = worldModelStepResults.map((r) =>
       r === undefined
         ? undefined
-        : { reconstructionLoss: r.reconstructionLoss, klLoss: r.klLoss, continueLoss: r.continueLoss },
+        : {
+            reconstructionLoss: r.reconstructionLoss,
+            klLoss: r.klLoss,
+            continueLoss: r.continueLoss,
+            rewardLoss: r.rewardLoss,
+          },
     );
 
     records.push({

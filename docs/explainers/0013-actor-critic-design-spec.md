@@ -151,10 +151,12 @@ function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, 
   bootstrapValueNumeric = bootstrapValueTensor.dataSync()[0]   // detached — computeLambdaReturns only ever sees the numeric copy, same as every per-step value above
   returns = computeLambdaReturns({ rewards: rewardsNumeric, values: valuesNumeric, continues: continuesNumeric, bootstrapValue: bootstrapValueNumeric, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
   advantage = returns.map((r, t) => r - valuesNumeric[t])   // R and V both constants — the baseline subtraction contributes no gradient
-  returnsTensor = tf.tensor1d(returns)                      // returns is already constant by construction — stopGradient() would be a no-op on a number[], so build the tensor directly instead
-  criticLoss = meanSquaredError(tf.concat(valueTensors, 0), returnsTensor)   // valueTensors is what actually carries the critic's gradient; valuesNumeric above never does
-  actorLoss = -mean(logProbs.map((lp, t) => lp.mul(advantage[t]))) - entropyCoefficient * mean(entropies)   // REINFORCE with a value baseline (open question 1, decided below) — replaces the earlier -mean(returns), which had zero gradient because returns never entered the tensor graph
-  { grads } = tf.variableGrads(() => actorLoss + criticLoss, [...actor.trainableWeights(), ...critic.trainableWeights()])
+  returnsTensor = tf.tensor2d(returns, [horizon, 1])        // [H, 1], matching tf.concat(valueTensors, 0)'s shape (each valueTensor is [1, 1], batch-1) — tf.tensor1d(returns) is [H], which tf.losses.meanSquaredError throws on and this repo's tf.mean(tf.square(tf.sub(...))) idiom instead silently broadcasts to [H, H] (PR #74 review, 2026-09-18)
+  { grads } = tf.variableGrads(() => {
+    criticLoss = meanSquaredError(tf.concat(valueTensors, 0), returnsTensor)   // valueTensors is what actually carries the critic's gradient; valuesNumeric above never does. Computed *inside* this closure, not before it, so tf.variableGrads' tape actually traces it (PR #74 review, 2026-09-18: computing it outside, as an earlier version of this sketch did, leaves the tape with nothing of this loss's own to differentiate)
+    actorLoss = -mean(logProbs.map((lp, t) => lp.mul(advantage[t]))) - entropyCoefficient * mean(entropies)   // REINFORCE with a value baseline (open question 1, decided below) — replaces the earlier -mean(returns), which had zero gradient because returns never entered the tensor graph
+    return actorLoss + criticLoss
+  }, [...actor.trainableWeights(), ...critic.trainableWeights()])
   optimizer.applyGradients(grads)
 ```
 

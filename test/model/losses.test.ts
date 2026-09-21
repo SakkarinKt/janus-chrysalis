@@ -7,6 +7,7 @@ import {
   klBalancedLoss,
   reconstructionLoss,
   continueLoss,
+  rewardLoss,
 } from "../../src/model/losses.ts";
 import type { LatentDistribution } from "../../src/model/rssm.ts";
 
@@ -95,6 +96,40 @@ test("continueLoss: gradient flows into the logit", () => {
   const grad = grads[logitVar.name];
   if (!grad) throw new Error(`no gradient recorded for ${logitVar.name}`);
   assert.ok(Array.from(grad.dataSync()).some((v) => v !== 0), "expected a nonzero gradient w.r.t. the logit");
+});
+
+test("rewardLoss: near-zero when predicted equals target, for any rewardScale", () => {
+  const predicted = tf.tensor2d([[-1.5]]);
+  const target = tf.tensor2d([[-1.5]]);
+  for (const rewardScale of [1, 4, 16]) {
+    const loss = rewardLoss(predicted, target, rewardScale).arraySync() as number;
+    assert.ok(Math.abs(loss) < 1e-6, `expected ~0 for rewardScale ${rewardScale}, got ${loss}`);
+  }
+});
+
+test("rewardLoss: large for a confidently-wrong prediction", () => {
+  const target = tf.tensor2d([[-4]]);
+  const wrongPredicted = tf.tensor2d([[4]]);
+  const loss = rewardLoss(wrongPredicted, target, 4).arraySync() as number;
+  assert.ok(loss > 1, `expected a large loss for a confidently-wrong prediction, got ${loss}`);
+});
+
+test("rewardLoss: gradient flows into predicted", () => {
+  const target = tf.tensor2d([[-2]]);
+  const predictedVar = tf.variable(tf.tensor2d([[0]]));
+  const { value, grads } = tf.variableGrads(() => rewardLoss(predictedVar, target, 4), [predictedVar]);
+  value.dispose();
+  const grad = grads[predictedVar.name];
+  if (!grad) throw new Error(`no gradient recorded for ${predictedVar.name}`);
+  assert.ok(Array.from(grad.dataSync()).some((v) => v !== 0), "expected a nonzero gradient w.r.t. predicted");
+});
+
+test("rewardLoss: a fixed absolute error scales down as rewardScale grows (catches a wiring bug that silently drops the rewardScale normalization)", () => {
+  const predicted = tf.tensor2d([[1]]);
+  const target = tf.tensor2d([[0]]);
+  const small = rewardLoss(predicted, target, 4).arraySync() as number;
+  const large = rewardLoss(predicted, target, 16).arraySync() as number;
+  assert.ok(large < small, `expected loss to shrink as rewardScale grows, got ${small} (scale 4) vs ${large} (scale 16)`);
 });
 
 test("stopGradient: forward value equals the input exactly", () => {

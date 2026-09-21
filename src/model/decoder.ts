@@ -17,8 +17,9 @@ export interface DecoderConfig {
  * decoder half of a DreamerV3-style world model. Kept as its own network
  * rather than a method on `RSSMCell`: the paper's RSSM is the dynamics core
  * (deterministic recurrence + prior/posterior over the stochastic latent)
- * only, with the decoder (and reward/continuation heads, not built yet)
- * reading off `(h_t, z_t)` separately. See
+ * only, with the decoder (and the reward/continuation heads —
+ * `src/model/rewardHead.ts`, `src/model/continueHead.ts`) reading off
+ * `(h_t, z_t)` separately. See
  * docs/explainers/0006-observation-reconstruction-loss.md.
  *
  * One linear dense layer, not a deeper MLP — matches `RSSMCell`'s
