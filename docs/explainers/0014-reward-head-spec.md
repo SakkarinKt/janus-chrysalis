@@ -137,6 +137,60 @@ With this normalization, the reward-loss term starts within the same O(0.1-1) ne
 computed once at `WorldModel` construction from the `GridworldConfig` it's built with (not
 per-call), same lifecycle as any other config-derived constant already closed over by `step()`.
 
+### Measured — the "one to two orders above" premise didn't hold (PR #77 review, 2026-09-21)
+
+`RewardHead`/`rewardLoss` landed via PR #77 (2026-09-20/21). That PR's merge review reproduced a
+first-step loss breakdown and found it didn't match the estimate above: *"normalized `rewardLoss`
+median 0.031 (max 0.146) vs `continueLoss` median 0.58 — O(0.01–0.1), not the O(0.1–1) asked for.
+Raw MSE median 0.50 is the same order as `continueLoss`, so the 'one to two orders above' premise
+... didn't hold; `0014` normalized by the −4.0 bound while typical rewards are −0.6 to −0.9."* The
+review also noted PR #77's own reproduction attempt didn't reproduce even the reviewer's own
+numbers, because the step `Rng` seed was unstated and the measurement script wasn't committed.
+This addendum is this run's fix for that: every seed below is stated, and the script that produced
+these numbers is committed at `scripts/measure-reward-loss-magnitude.ts`.
+
+**Method**: 24 seed combos (seed `0..23`, each split via `deriveSeed` into independent
+env-spawn/action-selection/model-init/step-`Rng` streams — see the script for the exact salts).
+Per combo: a fresh `CooperativeGridWorld` at `DEFAULT_CONFIG` is reset, one action per agent is
+drawn from the action-selection stream, `env.step()` is called once, and a fresh `WorldModel`
+(`rewardScale` from `env.rewardScale`, i.e. `4.0`) runs one `step(..., train: false, ...)` on
+agent 0's transition using the step-`Rng` stream — an untrained, first-real-transition
+measurement, matching this doc's own framing ("a measured first-step loss breakdown is the
+implementation run's job").
+
+**Results** (`self_checked, medium confidence` — one measurement design, not swept across configs
+or training progress; order-of-magnitude-consistent with, but not identical to, the PR #77
+reviewer's own independent sweep, whose exact seed/action scheme wasn't preserved):
+
+| quantity | median | max |
+| --- | --- | --- |
+| reward (raw, `[-4.0, 0.0]` bound) | −0.9375 | (min) −1.8750 |
+| `continueLoss` | 0.6834 | 0.9193 |
+| `rewardLoss` (normalized) | 0.0677 | 0.1792 |
+| `rewardLoss` (raw, unnormalized MSE) | 1.0827 | 2.8668 |
+
+This run's reward magnitudes (median −0.94, min −1.88) skew larger than the PR #77 review's
+"typical rewards are −0.6 to −0.9" — expected, since every sample here is the *first* step after
+`reset()` (freshly spawned, plausibly far from every landmark), not a mid-episode reward after
+agents have had time to close in. That difference in method, not a disagreement in the underlying
+claim, is the likely source of this run's raw-MSE median (1.08) running somewhat above the PR #77
+reviewer's own reported 0.50 — both are nonetheless the same order of magnitude as `continueLoss`
+(0.68), which is the load-bearing part of the finding.
+
+**Conclusion, corrected from the original estimate above**: normalized `rewardLoss` runs
+O(0.01–0.1) — one order of magnitude *below* `continueLoss`'s O(0.1–1), not matching it as
+originally intended, and raw (unnormalized) MSE runs in the *same* order of magnitude as
+`continueLoss` (1.08 vs. 0.68, within ~1.6×), not "one to two orders above" it. The original
+estimate's error: it reasoned from the range's worst case (`target²` up to `16` at the `−4.0`
+extreme), but actual — even first-step, freshly-reset — rewards run well inside that bound, so raw
+squared error never approaches the extreme the estimate anchored on. **Decision, unchanged**: keep
+the `rewardScale` normalization regardless of this correction. The PR #77 review's own reasoning
+for keeping it stands: "Adam makes the head's own weights coefficient-insensitive; only the
+shared-trunk weighting shifts" — normalization still keeps the term in a bounded, config-derived
+range instead of an arbitrary raw one, independent of whether the original magnitude estimate that
+motivated adding it turns out to have been off. `src/model/losses.ts`'s `rewardLoss` doc comment is
+corrected to match this measurement (this run).
+
 ## Wiring into `WorldModel` (`src/model/worldModel.ts`, proposed) — same pattern as `0011`
 
 - **Constructor**: `this.rewardHead = new RewardHead({ ...(config.seed !== undefined &&

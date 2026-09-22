@@ -104,13 +104,20 @@ export function continueLoss(logit: tf.Tensor2D, target: tf.Tensor2D): tf.Scalar
  * simplification `reconstructionLoss` already uses (negative log-likelihood
  * under a unit-variance isotropic Gaussian, up to an additive constant and a
  * `0.5` factor), specialized to a scalar target instead of
- * `[batch, observationSize]`, plus the `rewardScale` normalization: without
- * it, an unweighted reward-MSE term (raw target range `[-4.0, 0.0]` under
- * `DEFAULT_CONFIG`, prediction near `0` at init) starts one to two orders of
- * magnitude above `continueLoss`/`reconstructionLoss` and would dominate the
- * world-model gradient early in training — see
- * docs/explainers/0014-reward-head-spec.md's "Loss magnitude" section for the
- * full derivation and confidence tag. Not implemented by calling
+ * `[batch, observationSize]`, plus the `rewardScale` normalization. **Measured
+ * correction (PR #77 review, 2026-09-21; measurement in
+ * `scripts/measure-reward-loss-magnitude.ts`, loop/GOAL.md priority-1
+ * processing, 2026-09-22):** the raw (unnormalized) reward-MSE term does
+ * *not* start one to two orders of magnitude above `continueLoss` — typical
+ * rewards run well below the theoretical `[-4.0, 0.0]` worst-case bound this
+ * estimate originally used, so raw MSE lands in the *same* order of
+ * magnitude as `continueLoss` (24-seed-combo median 1.08 vs. 0.68 — see
+ * docs/explainers/0014-reward-head-spec.md's "Measured" addendum for the full
+ * numbers). The normalization is kept regardless (Adam makes the head's own
+ * weights coefficient-insensitive to a fixed rescaling; only the shared-trunk
+ * gradient weighting shifts, and normalized `rewardLoss` still lands in a
+ * bounded, config-derived range rather than an arbitrary raw one) — see that
+ * addendum for the corrected reasoning. Not implemented by calling
  * `reconstructionLoss` with `observationSize: 1`: kept as a distinct named
  * function per this codebase's existing one-loss-per-head convention
  * (`reconstructionLoss`, `continueLoss`, now `rewardLoss`), so a future
