@@ -129,31 +129,45 @@ function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, 
   // startState: a single (batch-1) RSSMState, matching WorldModel.currentState's actual
   // construction (this.cell.initialState(1)) — not an array. See open question 2, amended below:
   // imagination gets one start state per real step *and* batch size 1, not B parallel rollouts.
-  state = startState
-  valueTensors = []; continueTensors = []; logProbs = []; entropies = []
-  rewardsNumeric = []; valuesNumeric = []; continuesNumeric = []
-  for t in 0..horizon:
-    valueTensor = critic.value(state.deterministic, state.stochastic)
-    valueTensors.push(valueTensor)                        // kept as a tensor — feeds criticLoss's MSE below
-    valuesNumeric.push(valueTensor.dataSync()[0])          // detached numeric copy — feeds computeLambdaReturns only, which is number[] in/out per 0012
-    actionLogits = actor.logits(state.deterministic, state.stochastic)
-    action = actor.act(state.deterministic, state.stochastic, rng)          // ordinary categorical sample — no gradient path needed, see open question 1
-    logProbs.push(gatherLogProb(logSoftmax(actionLogits), action))            // logπ(a_t|s_t), differentiable w.r.t. actor weights only
-    entropies.push(categoricalEntropy(actionLogits))                          // differentiable w.r.t. actor weights, for the entropy bonus
-    nextDeterministic = worldModel.cell.step(state, action)
-    priorDist = worldModel.cell.prior(nextDeterministic, { rng })
-    state = { deterministic: nextDeterministic, stochastic: priorDist.sample }
-    rewardsNumeric.push(rewardHead.predict(state.deterministic, state.stochastic).dataSync()[0])   // rewardHead does not exist — see above; numeric from the start, same reasoning as values — computeLambdaReturns never sees a reward tensor
-    continueTensor = sigmoid(worldModel.continueHead.predict(state.deterministic, state.stochastic))
-    continueTensors.push(continueTensor)                  // not otherwise used by any loss below, but kept alongside valueTensors for symmetry and any future continue-side loss term
-    continuesNumeric.push(continueTensor.dataSync()[0])    // detached numeric copy — feeds computeLambdaReturns only
-  bootstrapValueTensor = critic.value(state.deterministic, state.stochastic)
-  bootstrapValueNumeric = bootstrapValueTensor.dataSync()[0]   // detached — computeLambdaReturns only ever sees the numeric copy, same as every per-step value above
-  returns = computeLambdaReturns({ rewards: rewardsNumeric, values: valuesNumeric, continues: continuesNumeric, bootstrapValue: bootstrapValueNumeric, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
-  advantage = returns.map((r, t) => r - valuesNumeric[t])   // R and V both constants — the baseline subtraction contributes no gradient
-  returnsTensor = tf.tensor2d(returns, [horizon, 1])        // [H, 1], matching tf.concat(valueTensors, 0)'s shape (each valueTensor is [1, 1], batch-1) — tf.tensor1d(returns) is [H], which tf.losses.meanSquaredError throws on and this repo's tf.mean(tf.square(tf.sub(...))) idiom instead silently broadcasts to [H, H] (PR #74 review, 2026-09-18)
+  //
+  // The whole rollout — every per-step forward pass below, not just criticLoss/actorLoss's own
+  // arithmetic — runs *inside* this one tf.variableGrads closure (PR #77 review, 2026-09-21,
+  // processed loop/GOAL.md priority 1 this run: an earlier revision of this sketch, corrected once
+  // already for computing criticLoss/actorLoss outside the closure, still built valueTensors/
+  // logProbs/entropies themselves outside it and only referenced them from inside — reproduced
+  // this run as "Cannot find a connection between any variable and the result"). tfjs's gradient
+  // tape only records ops that execute during the call to the function passed to
+  // tf.variableGrads; a tensor produced by critic.value()/actor.logits() before that call carries
+  // no recorded path back to critic/actor's trainableWeights, whether or not the tensor object is
+  // later referenced from inside the closure — the same "forward pass must run inside what
+  // differentiates it" constraint WorldModel.step()'s own forward() closure already documents
+  // (src/model/worldModel.ts:238-249), applied here to the actor/critic instead of the world
+  // model.
   { grads } = tf.variableGrads(() => {
-    criticLoss = meanSquaredError(tf.concat(valueTensors, 0), returnsTensor)   // valueTensors is what actually carries the critic's gradient; valuesNumeric above never does. Computed *inside* this closure, not before it, so tf.variableGrads' tape actually traces it (PR #74 review, 2026-09-18: computing it outside, as an earlier version of this sketch did, leaves the tape with nothing of this loss's own to differentiate)
+    state = startState
+    valueTensors = []; continueTensors = []; logProbs = []; entropies = []
+    rewardsNumeric = []; valuesNumeric = []; continuesNumeric = []
+    for t in 0..horizon:
+      valueTensor = critic.value(state.deterministic, state.stochastic)
+      valueTensors.push(valueTensor)                        // kept as a tensor — feeds criticLoss's MSE below
+      valuesNumeric.push(valueTensor.dataSync()[0])          // detached numeric copy — feeds computeLambdaReturns only, which is number[] in/out per 0012
+      actionLogits = actor.logits(state.deterministic, state.stochastic)
+      action = actor.act(state.deterministic, state.stochastic, rng)          // ordinary categorical sample — no gradient path needed, see open question 1
+      logProbs.push(gatherLogProb(logSoftmax(actionLogits), action))            // logπ(a_t|s_t), differentiable w.r.t. actor weights only
+      entropies.push(categoricalEntropy(actionLogits))                          // differentiable w.r.t. actor weights, for the entropy bonus
+      nextDeterministic = worldModel.cell.step(state, action)
+      priorDist = worldModel.cell.prior(nextDeterministic, { rng })
+      state = { deterministic: nextDeterministic, stochastic: priorDist.sample }
+      rewardsNumeric.push(rewardHead.predict(state.deterministic, state.stochastic).dataSync()[0])   // rewardHead does not exist — see above; numeric from the start, same reasoning as values — computeLambdaReturns never sees a reward tensor
+      continueTensor = sigmoid(worldModel.continueHead.predict(state.deterministic, state.stochastic))
+      continueTensors.push(continueTensor)                  // not otherwise used by any loss below, but kept alongside valueTensors for symmetry and any future continue-side loss term
+      continuesNumeric.push(continueTensor.dataSync()[0])    // detached numeric copy — feeds computeLambdaReturns only
+    bootstrapValueTensor = critic.value(state.deterministic, state.stochastic)
+    bootstrapValueNumeric = bootstrapValueTensor.dataSync()[0]   // detached — computeLambdaReturns only ever sees the numeric copy, same as every per-step value above
+    returns = computeLambdaReturns({ rewards: rewardsNumeric, values: valuesNumeric, continues: continuesNumeric, bootstrapValue: bootstrapValueNumeric, gamma, lambda })  // src/agent/lambdaReturns.ts, unmodified — number[] in, number[] out, per 0012's contract
+    advantage = returns.map((r, t) => r - valuesNumeric[t])   // R and V both constants — the baseline subtraction contributes no gradient
+    returnsTensor = tf.tensor2d(returns, [horizon, 1])        // [H, 1], matching tf.concat(valueTensors, 0)'s shape (each valueTensor is [1, 1], batch-1) — tf.tensor1d(returns) is [H], which tf.losses.meanSquaredError throws on and this repo's tf.mean(tf.square(tf.sub(...))) idiom instead silently broadcasts to [H, H] (PR #74 review, 2026-09-18)
+    criticLoss = meanSquaredError(tf.concat(valueTensors, 0), returnsTensor)   // valueTensors is what actually carries the critic's gradient; valuesNumeric above never does.
     actorLoss = -mean(logProbs.map((lp, t) => lp.mul(advantage[t]))) - entropyCoefficient * mean(entropies)   // REINFORCE with a value baseline (open question 1, decided below) — replaces the earlier -mean(returns), which had zero gradient because returns never entered the tensor graph
     return actorLoss + criticLoss
   }, [...actor.trainableWeights(), ...critic.trainableWeights()])
