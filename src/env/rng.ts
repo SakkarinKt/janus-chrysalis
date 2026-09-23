@@ -36,13 +36,24 @@ export class Rng {
  * draw too — a model-size ablation would not be holding the environment
  * trajectory constant).
  *
- * XORs in a large odd constant scaled by `salt + 1` — mulberry32 (`Rng`'s
- * generator) has no known short-cycle or correlation issue across arbitrary
- * 32-bit seeds, and this project only ever calls this with a handful of
- * small, distinct salts (one per agent index), not a security or
- * statistical-quality requirement — so a simple, deterministic, injective-
- * enough-in-practice mix is sufficient; no cryptographic hash is needed.
+ * Adds a large odd constant scaled by `salt + 1`, then runs MurmurHash3's
+ * 32-bit finalizer (`fmix32`, a bijection on uint32) over the sum. The
+ * non-linear finalizer is load-bearing: callers *nest* derivations
+ * (experiment `deriveSeed(seed, agent)` → `WorldModel` salt 0–3 →
+ * `RSSMCell` salt 0–3), and the pre-2026-09-23 plain-XOR version was
+ * commutative and self-inverse under nesting — `f(f(s, a), b) === f(f(s, b), a)`
+ * and `f(f(s, a), a) === s` — so agent 0's GRU input kernel shared a seed
+ * with agent 1's recurrent kernel (and vice versa), and agent 0's RSSM seed
+ * collapsed back to the raw experiment seed (session audit N2,
+ * `reports/quality/2026-09-23-session-audit.md`). Still not a cryptographic
+ * hash — none is needed, only distinct, uncorrelated-in-practice seeds for a
+ * handful of small salts. Changing this changed every seeded init/sampling
+ * stream from this commit on; earlier manifests stay reproducible at the
+ * `gitCommit` they record.
  */
 export function deriveSeed(seed: number, salt: number): number {
-  return (seed ^ Math.imul(0x9e3779b9, salt + 1)) >>> 0;
+  let h = (seed + Math.imul(0x9e3779b9, salt + 1)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
 }
