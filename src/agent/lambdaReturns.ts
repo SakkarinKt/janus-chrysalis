@@ -16,12 +16,23 @@ export interface LambdaReturnsInput {
    * Probability the episode continues past each step, in `[0, 1]` — not a
    * hard boolean `done` flag, so a future actor-critic can feed
    * `ContinueHead.predict()`'s sigmoid output (`src/model/continueHead.ts`)
-   * directly when bootstrapping through imagined rollouts. A caller working
-   * from ground-truth `done`s (e.g. `EpisodeStepRecord.done`,
-   * `src/experiment/freeze.ts`) passes the degenerate hard case, `done ? 0 :
-   * 1` per step — the same target-construction convention `WorldModel.step()`
-   * already uses for its continue-head training target
-   * (`src/model/worldModel.ts:184`, `docs/explainers/0011`).
+   * directly when bootstrapping through imagined rollouts.
+   *
+   * **`0` means a true terminal state only — never a time-limit truncation.**
+   * This project's `done` (`StepResult.done`, `EpisodeStepRecord.done`) is
+   * *always* a truncation (`CooperativeGridWorld.step`: `done = currentStep >=
+   * horizon`; the env has no absorbing states), so a caller working from
+   * ground-truth `done`s passes `1` at every step and lets `bootstrapValue`
+   * carry the value past the cut — the same "always bootstrap" rule
+   * `QLearningPolicy.update` adopted after PR #43's review
+   * (`src/agent/policy.ts:125-129`). Passing `done ? 0 : 1` would sever the
+   * return at every episode's last step: the exact bias PR #43 removed.
+   * (Session audit B2, 2026-09-23 — this comment previously recommended
+   * `done ? 0 : 1`. `WorldModel.step()`'s continue-head target
+   * (`continueTargetTensor`, `src/model/worldModel.ts`) still uses that
+   * polarity and so learns the horizon; separating terminal from truncated
+   * there is a Phase-3 prerequisite before any actor-critic bootstraps
+   * through imagination.)
    */
   continues: number[];
   /** Value estimate for the state immediately after the segment's last recorded step. */
