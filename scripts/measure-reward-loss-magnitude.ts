@@ -42,11 +42,11 @@ function median(xs: number[]): number {
 }
 
 function runOneCombo(seed: number): Sample {
-  // Three independent streams derived from one combo seed, same
+  // Four independent streams derived from one combo seed, same
   // deriveSeed-per-stream convention WorldModelConfig.seed itself uses
   // internally — kept distinct so this script's own seed choices don't
   // accidentally correlate the env's spawn RNG, the action-selection RNG,
-  // and the RSSM's step RNG.
+  // the model's init RNG, and the RSSM's step RNG.
   const envSeed = deriveSeed(seed, 0);
   const actionSeed = deriveSeed(seed, 1);
   const modelSeed = deriveSeed(seed, 2);
