@@ -19,9 +19,11 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
   stack-validation spike, RSSM completion (losses + rollout wiring), Arm-A metric plumbing, the
   3-seed instrument validation, JSONL telemetry + manifests, and the invariant tests. A
   training/smoke run without a `manifest.json` didn't happen.
-- **Reserved for the human (Gate G2 role-flip)**: the replay buffer and λ-returns modules. You may
-  draft their interfaces, specs, and test skeletons, but **must not implement** them — they are the
-  human's `user-implements` modules with you reviewing.
+- **Reserved for the human (Gate G2 role-flip)**: the replay buffer and λ-returns modules, and
+  the `Actor`/`Critic` actor-critic modules (reserved in the PR #80 review, 2026-09-22; recorded
+  here by the 2026-09-23 amendment). You may draft their interfaces, specs, and test skeletons,
+  but **must not implement** them — they are the human's `user-implements` modules with you
+  reviewing.
 - **Still gated (fresh promotion needed)**: the full ≥5-seed Arm-A sweep, Arms B–D, ablation 3
   (replay-reweighting), dashboards/demo, and any run beyond the 3-seed validation scale.
 - **Mid-phase amendment 2026-07-29** (human-approved, human-merged): the week-3 stack-validation
@@ -35,6 +37,12 @@ Produce novel empirical findings about **world models in multi-agent RL** (share
   minutes after it was posted, and shipped PR #56 without acknowledging the override (PR #56/#57
   reviews). The rule is deliberately general: it binds on *any* clearly-worded hold, not on the
   particular wording #55 happened to use.
+- **Mid-phase amendment 2026-09-23** (human-directed interactive session): the **stand-up report
+  format is replaced** (v3, below). Stand-ups had grown to 775–1,336 words, and quiet days
+  re-narrated the previous day's re-verification. **Learning journals are split**: root
+  `LEARNING.md` is the human's; `loop/LEARNING.md` is yours. A **twice-monthly retro agenda**
+  is added. `reports/retro/` joins the allowed write paths, and `Actor`/`Critic` join the reserved
+  list above. Evidence: `reports/quality/2026-09-23-session-audit.md` P2–P7.
 
 ## Today's increment (Phase 2 / L2-P2-slice)
 
@@ -98,9 +106,10 @@ Pick **one** bounded increment, in priority order:
 **Allowed (do autonomously):**
 
 - Read anything in the repo; web research; write/edit files under `notes/`, `docs/proposals/`
-  (drafts), `docs/explainers/`, `reports/standup/`, `reports/quality/`, `loop/` *except*
-  `GOAL.md`, and — new at this level — `src/`, `test/`, `experiments/`, within the vertical-slice
-  scope above.
+  (drafts), `docs/explainers/`, `reports/standup/`, `reports/quality/`, `reports/retro/`,
+  `loop/` *except* `GOAL.md` (`loop/LEARNING.md` is append-only), and — new at this level —
+  `src/`, `test/`, `experiments/`, within the vertical-slice scope above. Never write the
+  human's journal (root `LEARNING.md`).
 - Run `npm test` and bounded smoke/validation training runs up to the 3-seed
   instrument-validation scale (every run writes JSONL + `manifest.json`; commit only manifests +
   summary artifacts).
@@ -127,36 +136,106 @@ Pick **one** bounded increment, in priority order:
   on Apple Silicon / darwin install issues (deprioritized per the PR #19 review — the human drives
   any local darwin path out-of-band, see ADR-0002 decision 6).
 
-## Stand-up report (every run, no exceptions)
+## Stand-up report (every run, no exceptions) — v3, mid-phase amendment 2026-09-23
 
-Write `reports/standup/YYYY-MM-DD.md` (today's date) and include it in the PR:
+Write `reports/standup/YYYY-MM-DD.md` (today's date) and include it in the PR. The human reads
+it on a phone before deciding whether to open anything else, so **the top has to be useful on its
+own**. Put what you need from them first and move the evidence to the bottom.
 
 ```markdown
-# Stand-up — YYYY-MM-DD (run N)
+# Stand-up — YYYY-MM-DD · run N · <L1 | L2-P2-slice | …> · priority <#>
 
-## Done
-- <increment completed, with artifact paths>
-
-## Learned
-- <findings, surprises, confidence changes>
-
-## Blockers
-- <or "none">
+> **TL;DR** <one sentence: what changed today>
+> **Needs you:** <the single most useful human action, or "nothing today">
 
 ## Decisions needed
-- [ ] <blocking items only — each answerable by the human in one line; leave the box `[ ]`>
+- [ ] <one-line question — options A / B; default if silent: A>
+- Blocker: <only if something blocks the *next* run; omit the line otherwise>
 
-## Assumptions made (proceeding unless told otherwise)
-- <non-blocking defaults you chose and acted on, so the human can veto them — or "none">
+## Done
+- <≤3 bullets, each ending in → artifact path or PR link>
+
+## Learned
+- [<high|medium|low> · <self_checked|verified>] <finding> → <artifact path>
+
+## Assumptions (reply to veto)
+- <non-blocking default you acted on — or "none">
+
+## Gate G<n> tracker
+| criterion | status | evidence |
+| --- | --- | --- |
+| <one row per criterion of the next gate, from PLAN.html> | MET / PARTIAL / NOT MET | <path> |
+
+## 📓 Learning nudge
+- <exactly one bullet — see the rule below>
 
 ## Tomorrow
-- <proposed next increment>
+- <one line: the next increment>
 
 ## Manifest
-- level: <L1 | L2-P2-slice> | increment: <#> | files touched: <n> | runs: <none | manifest path(s)>
+- level: <…> | priority: <#> | files touched: <n> | runs: <none | manifest path(s)> | tests: <pass>/<total> (<todo> todo) | ratchet: <n>/<baseline>
+
+<details><summary>Evidence</summary>
+
+<verification commands and their output, re-verification detail, longer reasoning — anything a
+reviewer might want to check but does not need to read to act>
+
+</details>
 ```
 
-A run that produces no PR + report is a failed run. If you cannot complete the increment, ship the report anyway saying honestly what happened.
+**Rules:**
+
+- **Budget**: at most **400 words above `<details>`** (the tracker table excluded). Anything longer goes
+  inside `<details>` or into the artifact the bullet links to.
+- **Quiet-day form**: when no priority item needed new work, the stand-up is only TL;DR,
+  Decisions needed, Gate tracker, Learning nudge, and Manifest: **≤150 words** (the table
+  excluded). Do not re-narrate the previous day's re-verification. Say "unchanged since
+  <date>" and put what you checked in `<details>`.
+- **Decisions needed comes first.** Blockers are folded into it as a `Blocker:` line.
+  The heading text stays exactly "Decisions needed", so "Answering Decisions needed" and the
+  safety valve below keep applying unchanged. Every question offers options and states the
+  default you will take if there is no answer.
+- **`run N`** = the number of `reports/standup/*.md` files on `main` when the run starts, plus 1.
+  It is deterministic, so it never restarts or drifts again (it read "run 1" on 2026-09-22 and "run 32"
+  on 2026-09-23).
+- **Confidence tags** use one format everywhere: `[high|medium|low · self_checked|verified]`.
+- **Gate tracker**: one row per criterion of the *next* phase gate as `PLAN.html` states it,
+  status from evidence in the tree (not from a previous stand-up), evidence as a path.
+- **📓 Learning nudge: exactly one bullet, addressed to the human**:
+  - Name **one** explainer for them to summarize: the one this run added or changed, if any.
+    Otherwise, the oldest unsummarized explainer relevant to the next human-owned task.
+  - Give **one** concrete prompt question they could answer in three sentences.
+  - Show the backlog as `N/M explainers summarized`. M = number of `docs/explainers/NNNN-*.md`
+    files. N = number of distinct `NNNN` appearing in `### Summary — NNNN` headings in root
+    `LEARNING.md`.
+  - Encourage progress, not guilt: one entry this week beats a perfect backlog. If the human
+    wrote an entry since the last stand-up, name it and thank them for it.
+  - **Never write, edit, or pre-fill the human's entry.**
+
+A run that produces no PR + report is a failed run. If you cannot complete the increment, ship
+the report anyway saying honestly what happened.
+
+## Learning journals and retro (mid-phase amendment 2026-09-23)
+
+- **Root `LEARNING.md` is the human's journal.** Read it (to compute the nudge's N/M and to
+  prepare the retro). Never write it.
+- **`loop/LEARNING.md` is your journal, and it is append-only.** On the **first run of each ISO week**,
+  append one entry, `## YYYY-MM-DD — week NN`, of at most ~150 words:
+  - what went wrong in the loop's own process that week, and what a human review taught you;
+  - an assumption that broke;
+  - one thing you will do differently.
+
+  Write it as raw material for the final write-up, not as ceremony. It is part of that run's
+  reporting, not its increment.
+- **Retro, twice a month.** On the first run on or after the **1st** and the **15th** of each
+  month, also write `reports/retro/YYYY-MM-DD.md`: a **≤1-page agenda** that
+  - pairs both journals since the previous retro (human entries by heading, your entries by
+    date — quote a line, do not summarize the human's words for them);
+  - lists the explainers summarized since then;
+  - poses **2–3 discussion questions** where the two journals disagree or one is silent.
+
+  This is reporting, not the run's increment. The discussion itself happens in an interactive
+  session with the human. Link the agenda from that day's stand-up TL;DR.
 
 ## Answering "Decisions needed"
 

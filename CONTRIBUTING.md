@@ -9,7 +9,7 @@ This project is co-authored by a human (@SakkarinKt) and Claude. This file is th
 
 ## Code and knowledge flow
 
-- **Explain-before-implement.** Before implementing a core algorithm, Claude writes a 1-page note in `docs/explainers/`. The merge condition: the human writes a 3-sentence summary *in their own words* into `LEARNING.md`. If they can't, the explainer failed — iterate on the explainer, not the summary.
+- **Explain-before-implement.** Before implementing a core algorithm, Claude writes a 1-page note in `docs/explainers/`. The merge condition: the human writes a 3-sentence summary *in their own words* into their journal, root `LEARNING.md`. If they can't, the explainer failed — iterate on the explainer, not the summary.
 - **Role flips.** Issues labeled `user-implements` are coded by the human with Claude as PR reviewer — at least 2 per phase.
 - **PRs even solo.** All non-trivial work lands via PR; the other author reviews. Direct-to-main is allowed only for typos and journal entries.
 - **Conventional commits**: `feat:`, `fix:`, `exp:` (experiment runs/configs), `docs:`, `adr:`, `test:`, `chore:`.
@@ -29,6 +29,12 @@ Each phase ends with a gate (G1–G4) where **Claude drafts the rubric and the h
 
 A scheduled Claude agent runs once a day in the cloud under the contract in `loop/GOAL.md` (allow / approve / deny boundaries, graduation levels L1–L3). Each run opens a PR with a stand-up report in `reports/standup/`. Replying to "Decisions needed" items in that PR **is** the async stand-up meeting; the next run reads replies first. If two consecutive stand-ups go unreviewed, the loop restricts itself to research/documentation until the human catches up.
 
-## Learning journal
+## Learning journals and retro
 
-`LEARNING.md` gets one short weekly entry from each author — including Claude (what assumptions broke, what the human taught it about intent). This is raw material for the final writeup, not ceremony.
+Two journals, one per author, both raw material for the final writeup, not ceremony:
+
+- **`LEARNING.md`** (root) is the human's journal: explainer summaries (the explain-before-implement merge condition above, under a `### Summary — NNNN …` heading) and weekly reflections. The daily loop reads it, to show the summary backlog in each stand-up's one-bullet Learning nudge, but never writes to it.
+- **`loop/LEARNING.md`** is Claude's loop journal: one append-only entry per week (loop-process lessons, what the human's reviews taught it, broken assumptions).
+- **Retro, twice a month** (1st and 15th): the loop drafts a ≤1-page agenda in `reports/retro/` that pairs both journals and poses 2–3 questions. Both authors discuss it in an interactive session.
+
+Split from a single `LEARNING.md` on 2026-09-23 (`loop/GOAL.md` mid-phase amendment).

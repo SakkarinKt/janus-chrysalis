@@ -24,6 +24,7 @@
     "artifacts", // run outputs; gitignored, but guard anyway
     "reports/standup", // machine-generated daily logs; not worth linting
     "reports/quality", // loop-generated findings reports; same rationale as standup
+    "reports/retro", // loop-drafted retro agendas; same rationale as standup
     "**/CHANGELOG.md"
   ]
 }

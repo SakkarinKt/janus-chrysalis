@@ -140,7 +140,7 @@
     </div>
     <div class="card">
       <h4>Stand-up (async)</h4>
-      Each run writes <code>reports/standup/YYYY-MM-DD.md</code>: Done · Learned · Blockers · Decisions needed · Tomorrow. The human replies in the PR; the next run reads replies first — that's the meeting.
+      Each run writes <code>reports/standup/YYYY-MM-DD.md</code> (v3, amended 2026-09-23): TL;DR + <i>Needs you</i> first, then Decisions · Done · Learned · Gate tracker · one Learning-nudge bullet · Tomorrow, ≤400 words (quiet days ≤150), evidence folded. The human replies in the PR; the next run reads replies first — that's the meeting.
     </div>
     <div class="card">
       <h4>Graduation levels</h4>
@@ -152,7 +152,8 @@
   <div class="tablewrap"><table>
     <tr><th>Mechanism</th><th>Rule</th></tr>
     <tr><td>ADRs</td><td>Every irreversible decision is a ~15-line ADR merged via a PR the human approves.</td></tr>
-    <tr><td>Explain-before-implement</td><td>Core algorithms get a 1-page explainer first; merge condition = the human summarizes it in their own words in <code>LEARNING.md</code>.</td></tr>
+    <tr><td>Explain-before-implement</td><td>Core algorithms get a 1-page explainer first; merge condition = the human summarizes it in their own words in <code>LEARNING.md</code> (the human's journal). Each stand-up carries one Learning-nudge bullet with the backlog.</td></tr>
+    <tr><td>Journals &amp; retro</td><td>Two journals: <code>LEARNING.md</code> (human) and <code>loop/LEARNING.md</code> (Claude, weekly, append-only). A twice-monthly retro agenda in <code>reports/retro/</code> pairs them for an interactive discussion. <i>(Amendment 2026-09-23.)</i></td></tr>
     <tr><td>Role flips</td><td><code>user-implements</code> issues: human writes the code, Claude reviews. ≥2 per phase. Nobody verifies their own work.</td></tr>
     <tr><td>Claims</td><td><code>self_checked</code> may inform; only <code>verified</code> may justify decisions or enter the writeup. Every claim ties to an artifact path.</td></tr>
     <tr><td>Gates</td><td>Claude drafts the rubric; the human executes the review. A phase is done when the human says so.</td></tr>
