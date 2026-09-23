@@ -1,0 +1,104 @@
+{
+  "runId": "2026-09-23-g2-loss-curve",
+  "seed": 1001,
+  "episodes": 20,
+  "horizon": 75,
+  "policy": "RandomPolicy (both agents)",
+  "freeze": null,
+  "rssmConfig": {
+    "deterministicSize": 256,
+    "latentCategoricals": 8,
+    "latentClasses": 4
+  },
+  "rewardScale": 4,
+  "lossConfig": "defaults (freeBits 1, betaDyn 1.0, betaRep 0.1)",
+  "weightInitSeeds": {
+    "agent0": 3967342178,
+    "agent1": 866027395
+  },
+  "episodeSeeds": {
+    "env": "deriveSeed(seed, 1000 + episodeIndex)",
+    "runEpisode": "deriveSeed(seed, 2000 + episodeIndex)"
+  },
+  "worldModelSteps": 3000,
+  "wallSeconds": 47.083,
+  "nanHalt": false,
+  "gitCommit": "c3f0923857267612ef66d160525697bbed9490b6",
+  "nodeVersion": "v22.22.2",
+  "tfjsBackend": "tensorflow",
+  "createdAt": "2026-09-23T03:14:05.269Z",
+  "telemetryFile": "telemetry.jsonl",
+  "preRegisteredRule": "per (seed, agent): episode-20 mean total loss < episode-1 mean AND OLS slope over 20 episode means < 0; no WorldModelNaNError",
+  "resultSummary": [
+    {
+      "seed": 1001,
+      "agent": 0,
+      "first": 2.5275290473302205,
+      "last": 1.6510124254226684,
+      "slope": -0.033614617365643494,
+      "pass": true,
+      "components": {
+        "loss": {
+          "first": 2.5275290473302205,
+          "last": 1.6510124254226684,
+          "slope": -0.033614617365643494
+        },
+        "reconstructionLoss": {
+          "first": 1.1250876971085866,
+          "last": 0.45439483831326166,
+          "slope": -0.02965423283067748
+        },
+        "klLoss": {
+          "first": 1.100000023841858,
+          "last": 1.100000023841858,
+          "slope": 0
+        },
+        "continueLoss": {
+          "first": 0.2938864174981912,
+          "last": 0.08290769217535854,
+          "slope": -0.003957411569685566
+        },
+        "rewardLoss": {
+          "first": 0.008554922673016942,
+          "last": 0.013709866744223594,
+          "slope": -0.000002973316815809484
+        }
+      }
+    },
+    {
+      "seed": 1001,
+      "agent": 1,
+      "first": 2.9400045744578045,
+      "last": 1.5644301160176595,
+      "slope": -0.03059073364166987,
+      "pass": true,
+      "components": {
+        "loss": {
+          "first": 2.9400045744578045,
+          "last": 1.5644301160176595,
+          "slope": -0.03059073364166987
+        },
+        "reconstructionLoss": {
+          "first": 1.5170775830745697,
+          "last": 0.36590875014662744,
+          "slope": -0.026595974382302517
+        },
+        "klLoss": {
+          "first": 1.100000023841858,
+          "last": 1.100000023841858,
+          "slope": 0
+        },
+        "continueLoss": {
+          "first": 0.31460911363363264,
+          "last": 0.0885796035764118,
+          "slope": -0.00402610133700353
+        },
+        "rewardLoss": {
+          "first": 0.008317862911959916,
+          "last": 0.009941740495572352,
+          "slope": 0.00003134206767733647
+        }
+      }
+    }
+  ]
+}
