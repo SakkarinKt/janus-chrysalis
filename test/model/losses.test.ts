@@ -173,6 +173,29 @@ test("klBalancedLoss: free-bits floor clips dynLoss/repLoss to exactly freeBits 
   assert.equal(repLoss.arraySync(), 1, "expected the floor, not the (much smaller) true KL");
 });
 
+test("klBalancedLoss: free-bits floor applies per batch row, before the batch mean — mean(max(KL_i, fb)), not max(fb, mean(KL)) (session audit N6, 2026-09-23)", () => {
+  // Row 0: prior ≈ posterior (KL ≈ 0.0006, below the floor). Row 1: far apart
+  // (KL ≈ 2.46, above it). A batch-size-1 test cannot tell the two floor
+  // placements apart; this one can: per-row ≈ (1 + 2.46)/2 ≈ 1.73,
+  // batch-mean ≈ max(1, (0.0006 + 2.46)/2) ≈ 1.23.
+  const prior = tf.tensor3d([[[0.34, 0.33, 0.33]], [[0.9, 0.05, 0.05]]]);
+  const posterior = tf.tensor3d([[[0.33, 0.34, 0.33]], [[0.05, 0.05, 0.9]]]);
+  const freeBits = 1;
+  // NaN defaults make a missing row fail every comparison below instead of passing silently.
+  const [kl0 = NaN, kl1 = NaN] = categoricalKL(posterior, prior).arraySync() as number[];
+  assert.ok(kl0 < freeBits && kl1 > freeBits, `precondition: one row below, one above the floor — got ${kl0}, ${kl1}`);
+
+  const perRowFloor = (Math.max(kl0, freeBits) + Math.max(kl1, freeBits)) / 2;
+  const batchMeanFloor = Math.max(freeBits, (kl0 + kl1) / 2);
+  assert.ok(Math.abs(perRowFloor - batchMeanFloor) > 0.1, "precondition: the two placements must be distinguishable");
+
+  const { dynLoss, repLoss } = klBalancedLoss(distFromProbs(prior), distFromProbs(posterior), { freeBits });
+  for (const [name, loss] of [["dynLoss", dynLoss], ["repLoss", repLoss]] as const) {
+    const got = loss.arraySync() as number;
+    assert.ok(Math.abs(got - perRowFloor) < 1e-5, `${name}: expected per-row floor ${perRowFloor}, got ${got} (batch-mean floor would be ${batchMeanFloor})`);
+  }
+});
+
 test("klBalancedLoss: total = betaDyn * dynLoss + betaRep * repLoss", () => {
   const prior = tf.tensor3d([[[0.7, 0.2, 0.1]]]);
   const posterior = tf.tensor3d([[[0.1, 0.2, 0.7]]]);

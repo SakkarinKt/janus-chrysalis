@@ -295,6 +295,23 @@ test("WorldModel: a warm (post-first-step) run of mixed train/eval steps leaves 
   wm.dispose();
 });
 
+test("WorldModel: dispose() releases every tensor the instance allocated — weights and Adam state included, not just the recurrent state (session audit N1, 2026-09-23)", () => {
+  const before = tf.memory().numTensors;
+  const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, rewardScale: REWARD_SCALE, seed: 5 });
+  const rng = new Rng(3);
+  // Train at least once so Adam's lazily-created moment/velocity slots exist too.
+  for (let i = 0; i < 3; i++) wm.step(i % 2 === 0 ? Action.Up : Action.Down, OBSERVATION, rng, true, false, REWARD);
+  assert.ok(tf.memory().numTensors > before, "precondition: constructing + training allocated tensors");
+
+  wm.dispose();
+
+  assert.equal(
+    tf.memory().numTensors - before,
+    0,
+    `expected dispose() to return the tensor count to its pre-construction value, got ${tf.memory().numTensors - before} leaked`,
+  );
+});
+
 test("WorldModel: a throw from forward() (wrong-length observation, shape mismatch inside cell.posterior) leaves this.state exactly as it was — still usable, not disposed (PR #40 review follow-up 1)", () => {
   const wm = new WorldModel({ rssm: CONFIG, observationSize: OBSERVATION_SIZE, rewardScale: REWARD_SCALE });
   const rng = new Rng(1);

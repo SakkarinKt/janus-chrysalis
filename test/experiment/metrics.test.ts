@@ -19,6 +19,8 @@ import { Action } from "../../src/env/types.ts";
  * passing — see PR #63's review / docs/explainers/0007's addendum.
  */
 const CONTINUE_LOSS_OFFSET = 1000;
+/** Same reasoning for `rewardLoss` (docs/explainers/0014): excluded from the metric, so a non-zero value here makes an accidental inclusion fail (session audit N7, 2026-09-23). */
+const REWARD_LOSS_OFFSET = 100;
 
 function record(
   step: number,
@@ -34,11 +36,11 @@ function record(
     reward: 0,
     done: false,
     frozen: [false, false],
-    worldModelLoss: reconKl.map((v) => (v === undefined ? undefined : v + CONTINUE_LOSS_OFFSET)),
+    worldModelLoss: reconKl.map((v) => (v === undefined ? undefined : v + CONTINUE_LOSS_OFFSET + REWARD_LOSS_OFFSET)),
     worldModelLossBreakdown: reconKl.map((v) =>
       v === undefined
         ? undefined
-        : { reconstructionLoss: v, klLoss: 0, continueLoss: CONTINUE_LOSS_OFFSET, rewardLoss: 0 },
+        : { reconstructionLoss: v, klLoss: 0, continueLoss: CONTINUE_LOSS_OFFSET, rewardLoss: REWARD_LOSS_OFFSET },
     ),
   };
 }
@@ -53,6 +55,20 @@ test("postFreezeLossSeries: extracts one agent's reconstructionLoss+klLoss for e
   assert.deepEqual(postFreezeLossSeries(records, 3, 0), [1.2, 1.3]);
   assert.deepEqual(postFreezeLossSeries(records, 3, 1), [2.2, 2.3]);
   assert.deepEqual(postFreezeLossSeries(records, 1, 0), [1.0, 1.1, 1.2, 1.3]);
+});
+
+test("postFreezeLossSeries: sums reconstructionLoss AND klLoss — neither term may be dropped (session audit N7, 2026-09-23)", () => {
+  // The shared fixture above sets klLoss: 0, so dropping the KL term would pass every other test here.
+  const records: EpisodeStepRecord[] = [
+    {
+      ...record(1, [0, 0]),
+      worldModelLossBreakdown: [
+        { reconstructionLoss: 0.5, klLoss: 0.25, continueLoss: CONTINUE_LOSS_OFFSET, rewardLoss: REWARD_LOSS_OFFSET },
+        undefined,
+      ],
+    },
+  ];
+  assert.deepEqual(postFreezeLossSeries(records, 1, 0), [0.75]);
 });
 
 test("postFreezeLossSeries: throws when freezeStep never occurs in records", () => {

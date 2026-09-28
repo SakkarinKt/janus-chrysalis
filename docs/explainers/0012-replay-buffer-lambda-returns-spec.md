@@ -180,3 +180,35 @@ direct consequence of the recurrence above rather than a separate design decisio
 - **The four open design questions above are not decided.** They're flagged so the human's Gate G2
   implementation and its review both start from the same list of known-open choices, not so this
   increment can pick an answer on their behalf.
+
+## Errata — 2026-09-23 (session audit, before the Gate G2 implementation)
+
+Three corrections to the λ-returns half above, made before the human implements it so the
+implementation and its review start from the right contract
+(`reports/quality/2026-09-23-session-audit.md`, finding B2 and N16):
+
+1. **`continues` from ground-truth `done`s is `1`, not `done ? 0 : 1`.** This project's `done` is
+   *always* a time-limit truncation (`src/env/gridworld.ts`: `done = currentStep >= horizon`; the
+   env has no absorbing states). Truncation must keep bootstrapping — `bootstrapValue` carries the
+   value past the cut — exactly the rule `QLearningPolicy.update` adopted after PR #43's review
+   (`src/agent/policy.ts:125-129`). The "degenerate hard case `done ? 0 : 1`" bullet above would
+   reintroduce that bias at every episode's last step. `continues[t] = 0` stays correct for a
+   *true* terminal, which is why the boundary property "`continues[t] === 0` severs bootstrapping"
+   still holds as math. `WorldModel.step()`'s continue-head target (`continueTargetTensor`) has the
+   same polarity problem and learns the horizon; fixing that needs a terminal/truncated split in
+   `StepResult` and is carried to Phase 3 as a prerequisite for any actor-critic that bootstraps
+   through imagination.
+2. **`lambda: 1` is the n-step return bootstrapped at the end, not a pure Monte-Carlo return.**
+   Unrolling the recursion at `lambda = 1` gives
+   `R_t = Σ_{k=t}^{T-1} γ^{k-t} (Π_{j=t}^{k-1} c_j) r_k + γ^{T-t} (Π_{j=t}^{T-1} c_j) · bootstrapValue`.
+   It is Monte-Carlo only when that tail vanishes (`bootstrapValue = 0`, or some `c_j = 0`). The
+   test for this property states the tail explicitly.
+3. **`values[0]` is never read by the recursion** — only `values[1..T-1]` and `bootstrapValue`
+   are. That is correct: `values[t]` is `V(s_t)`, and `R_t` bootstraps from `V(s_{t+1})`. `values[0]`
+   is needed later, by whatever computes advantages `R_t − V(s_t)`. A test pins that changing
+   `values[0]` leaves every return unchanged, so an implementation that shifts the index by one
+   fails loudly.
+
+Still unspecified (the implementation should decide and document it): empty input
+(`rewards.length === 0` — return `[]` or throw), and range checks on `gamma`, `lambda`, and
+`continues` values.

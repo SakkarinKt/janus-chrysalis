@@ -183,9 +183,19 @@ export class WorldModel {
     this.state = this.cell.initialState(1);
   }
 
+  /**
+   * Releases everything this instance owns: the recurrent state, every
+   * trainable weight (cell, decoder, both heads), and the Adam optimizer's
+   * moment slots + `accBeta` variables. The instance is unusable afterwards.
+   * Disposing only the state (the pre-2026-09-23 behavior) leaked all of the
+   * rest for the process lifetime — two models per seed × condition in every
+   * experiment script (session audit N1, `reports/quality/2026-09-23-session-audit.md`).
+   */
   dispose(): void {
     this.state.deterministic.dispose();
     this.state.stochastic.dispose();
+    for (const v of this.trainableVars) v.dispose();
+    this.optimizer.dispose();
   }
 
   /**
