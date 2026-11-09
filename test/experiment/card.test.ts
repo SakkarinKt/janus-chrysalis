@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CardError, findCard, listCards, parseCard } from "../../src/experiment/card.ts";
 import { makeFixtureRepo, validCard } from "./harnessFixture.ts";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** The problems `parseCard` reports for `raw`, or `[]` if it accepts it. */
@@ -114,6 +115,17 @@ test("listCards: refuses a card without run.ts, invalid JSON, and two cards shar
   } finally {
     repo.dispose();
   }
+});
+
+test("the card template in experiments/cards/TEMPLATE is itself a valid card, so copying it starts from something that loads", () => {
+  const template: unknown = JSON.parse(readFileSync("experiments/cards/TEMPLATE/card.json", "utf8"));
+  assert.deepEqual(problems(template, "0000-template"), []);
+});
+
+test("every card in this repository loads", () => {
+  const cards = listCards("experiments/cards");
+  assert.ok(cards.length >= 1, "at least the canary");
+  assert.equal(cards[0]?.dirName, "0000-g2-canary");
 });
 
 test("listCards: a missing cards directory is an empty list", () => {

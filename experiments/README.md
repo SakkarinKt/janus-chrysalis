@@ -28,9 +28,13 @@ lowest-numbered card that is ready, which is how the daily loop picks its work.
 
 A recorded run:
 
-- needs a clean working tree, so the commit in the manifest describes exactly what ran;
+- needs a clean working tree, so the commit in the manifest describes exactly what ran. Results
+  recorded earlier and not committed yet (new files under `artifacts/`, new ledger lines) do not
+  count as dirty, so several cards can be run back to back;
 - writes `artifacts/<card>/<runId>/manifest.json` (schema v2) beside the run's outputs;
 - appends one line to `ledger.jsonl`.
+
+How to write a card, and what CI checks about cards and results, is in `cards/README.md`.
 
 A `confirmatory` or `calibration` card is recorded **once**. Asking again is refused: the rule
 was fixed before the run, and a second run would be choosing between results. A `repro` card

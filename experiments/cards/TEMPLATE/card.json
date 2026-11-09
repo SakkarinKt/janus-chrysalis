@@ -1,0 +1,20 @@
+{
+  "id": "0000",
+  "title": "One line: what this experiment is",
+  "hypothesis": "What you expect to see, stated so that the decision rule below can contradict it.",
+  "kind": "confirmatory",
+  "config": {
+    "note": "Everything run.ts is parameterised by goes here. run.ts reads it; it has no constants of its own."
+  },
+  "seeds": [2001, 2002, 2003],
+  "primaryMetric": "nameOfTheOneNumberTheRuleIsAbout",
+  "secondaryMetrics": ["persistenceBaseline", "anythingElseReportedButNotJudged"],
+  "decisionRule": {
+    "text": "Pass if <primaryMetric> is at least <threshold> in at least <k> of <n> seeds. Written so it can be applied without reading run.ts.",
+    "thresholds": { "threshold": 0, "k": 0 }
+  },
+  "onFail": "What a fail changes in the research plan. If nothing would change, do not run the card.",
+  "dependsOn": [],
+  "budget": { "maxWallMinutes": 30 },
+  "supersedes": null
+}
