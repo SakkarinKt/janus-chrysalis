@@ -119,16 +119,17 @@ try {
   }
 
   const mode = args.scratch ? "scratch" : "result";
+  const modeLabel = args.scratch ? "scratch" : "recorded";
   const seeds = args.seeds ?? loaded.card.seeds;
   if (args.dryRun) {
     console.log(
-      `Would run ${loaded.dirName} [${loaded.card.kind}] as a ${mode} run: ${seeds.length} seed(s), ` +
+      `Would run ${loaded.dirName} [${loaded.card.kind}] as a ${modeLabel} run: ${seeds.length} seed(s), ` +
         `budget ${loaded.card.budget.maxWallMinutes} min. Status: ${describeStatus(cardStatus(loaded, cards, ledger))}.`,
     );
     process.exit(0);
   }
 
-  console.log(`Running ${loaded.dirName} (${mode}): ${loaded.card.title}`);
+  console.log(`Running ${loaded.dirName} (${modeLabel}): ${loaded.card.title}`);
   const outcome = executeCard(loaded, cards, ledger, paths, {
     mode,
     ...(args.seeds === undefined ? {} : { seeds: args.seeds }),
