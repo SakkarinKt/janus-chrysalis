@@ -64,9 +64,15 @@ function parseBaseRef(argv) {
   return "HEAD";
 }
 
+/** Scratch runs are gitignored and may cite a dirty or local-only commit; they are not evidence. */
+const SCRATCH_DIR = join(ARTIFACTS_DIR, "_scratch");
+
 function* findManifests(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
+    if (path === SCRATCH_DIR) {
+      continue;
+    }
     if (entry.isDirectory()) {
       yield* findManifests(path);
     } else if (entry.name === "manifest.json") {
