@@ -19,9 +19,17 @@ name: CI
 # `scripts/typecheck-ratchet.mjs` (`BASELINE_IN_REPO_ERRORS`, 44 since
 # 2026-08-06); read it there rather than trusting a number in a comment.
 # Promote to gating on the raw `tsc` exit code once that backlog is cleared.
-# Coverage note: `tsconfig.json`'s `include` is `["src", "test"]`, so this
-# step does not check `experiments/` at all — that dir needs its own
-# spot-check.
+# Coverage note: `tsconfig.json`'s `include` is `["src", "test"]`. The
+# harness's own code (`scripts/`, `experiments/cards/`) is checked by a
+# second step, `typecheck:harness`, which has no backlog and so fails on any
+# error. The frozen `experiments/<date>-*/` scripts are checked by neither,
+# on purpose (`experiments/README.md`).
+#
+# `canary` (2026-11-09) re-runs the Gate G2 loss curve through the harness
+# (`npm run exp -- 0000`) and fails if the regenerated summary differs from
+# the committed one. It catches a change to a seeded stream or to training
+# numerics that no unit test pins. It runs as a scratch run: nothing it
+# produces is committed. About three minutes.
 #
 # Evidence reachability (2026-11-09): the `lint` job also runs
 # `scripts/check-evidence-reachable.mjs`, which fails if any
@@ -78,3 +86,23 @@ jobs:
         run: npm test
       - name: Typecheck (gated on regressions only, see comment above)
         run: npm run typecheck:ratchet
+      - name: Typecheck the harness (scripts/ and experiments/cards/, zero errors)
+        run: npm run typecheck:harness
+
+  canary:
+    name: canary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Canary — the Gate G2 loss curve still reproduces (card 0000)
+        run: npm run exp -- 0000 --scratch --require-pass
+      - name: Smoke-run the reward-loss measurement script
+        run: node scripts/measure-reward-loss-magnitude.ts --scratch
