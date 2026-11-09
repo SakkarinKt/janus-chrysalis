@@ -8,7 +8,7 @@ head per (A), as priority 3's first sub-piece." Written explainer-before-impleme
 
 ## The decision this closes (PR #61/#62)
 
-`reports/standup/2026-09-01.md` raised three options for `PLAN.html:110`'s "Continue/termination
+`reports/standup/archive/2026-Q3/2026-09-01.md` raised three options for `PLAN.html:110`'s "Continue/termination
 head from day one," since Arm-A's gridworld (`src/env/gridworld.ts:57,65-66`) only ever sets
 `done = currentStep >= horizon` — a deterministic function of the step counter, not a real
 early-termination condition to predict. PR #62's review picked a fourth option: **(A) plus the

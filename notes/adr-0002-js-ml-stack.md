@@ -1,5 +1,10 @@
 # Notes toward ADR-0002: JS ML stack / world-model backbone choice
 
+> **Update 2026-11-09.** The decision these notes fed was accepted on 2026-07-20 as
+> [`docs/adr/0002-js-ml-stack.md`](../docs/adr/0002-js-ml-stack.md), which cites §1–§10 below as
+> its evidence. The status line that follows ("not a decision", "needs human signoff") is
+> historical. Read the ADR for what was decided and this file for why.
+
 Status: research notes only, **not a decision**. ADR-0002 itself needs human signoff per
 `loop/GOAL.md` boundaries — this file collects evidence to make that signoff easier, and directly
 unblocks proposal `0001`'s scoped L2 milestone, which needs one backbone named before any code is

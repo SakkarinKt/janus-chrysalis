@@ -118,7 +118,7 @@ existing single-step computation, not a new time axis.
   interleave into the same stream). The review left this "your call, ride along or wait for priority
   4." Deferred to priority 4's metric plumbing rather than folded in here, to keep this sub-increment
   scoped to the one loss term `loop/GOAL.md` names — recorded under this run's "Assumptions made" in
-  `reports/standup/2026-08-07.md`, not silently dropped.
+  `reports/standup/archive/2026-Q3/2026-08-07.md`, not silently dropped.
 
 ## Test coverage
 

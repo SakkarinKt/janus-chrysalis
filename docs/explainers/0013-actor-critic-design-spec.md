@@ -17,7 +17,7 @@ test would actually catch a WM/AC gradient leak, which `loop/GOAL.md` priority 5
 before there was any actor-critic code to leak into (`src/agent/` still holds only `RandomPolicy`
 and tabular `QLearningPolicy` as of this run — confirmed by re-reading `src/agent/policy.ts`).
 
-## Blocking dependency this spec does not resolve: no reward head exists
+## Former blocking dependency, closed: `RewardHead` landed via PR #77
 
 DreamerV3-style imagination training (arXiv:2301.04104, Hafner/Pasukonis/Ba/Lillicrap,
 "Mastering Diverse Domains through World Models" — verified via cross-checked search results
@@ -25,32 +25,34 @@ this run, `self_checked, high confidence`; not a primary-source `WebFetch` read,
 `arxiv.org` is blocked by this environment's egress proxy, same constraint
 `notes/papers/codreamer-2024.md`/`mabl-2024.md` record for an earlier session) trains its critic
 against λ-returns computed over an **imagined** rollout's rewards, values, and continues. This
-project has a continuation head (`src/model/continueHead.ts`, `docs/explainers/0011`) and a
-reconstruction decoder (`src/model/decoder.ts`, `docs/explainers/0006`), but **no reward head** —
-`decoder.ts:20`'s doc comment names it explicitly: *"the decoder (and reward/continuation heads,
-not built yet)"*, and `docs/explainers/0011`'s own "what's deliberately not here" section confirms
-the continuation head closed only half that gap: *"Reward head. DreamerV3's full `L_pred` also
-includes a reward-prediction term ... Still out of scope."*
+spec originally named a blocking gap here: this project had a continuation head
+(`src/model/continueHead.ts`, `docs/explainers/0011`) and a reconstruction decoder
+(`src/model/decoder.ts`, `docs/explainers/0006`), but no reward head — `decoder.ts:20`'s doc
+comment named it explicitly at the time: *"the decoder (and reward/continuation heads, not built
+yet)"*, and `docs/explainers/0011`'s own "what's deliberately not here" section confirmed the
+continuation head closed only half that gap: *"Reward head. DreamerV3's full `L_pred` also
+includes a reward-prediction term ... Still out of scope."* `docs/explainers/0014-reward-head-spec.md`
+specified `RewardHead`/`rewardLoss` to close it, and the implementation landed via PR #77
+(2026-09-20/21): `src/model/rewardHead.ts`, `WorldModel.rewardHead`, wired into `step()`'s loss
+total and `freeze.ts`'s one production call site.
 
 Concretely: `computeLambdaReturns`'s `LambdaReturnsInput.rewards` (`src/agent/lambdaReturns.ts`)
-has no source once a rollout leaves real environment steps and enters imagination — `env.step()`
-isn't called there, only `RSSMCell.prior()` is. Without a reward head, the actor-critic below can
-be fully specified (interfaces, gradient-separation invariant, training-loop shape) but cannot
-be exercised end-to-end even once implemented. **This spec deliberately does not design that
-head** — it's a world-model addition (extends `WorldModel`, not `src/agent/`), out of a
-docs-only actor-critic increment's scope, and belongs as its own future explainer (a natural
-next `RSSM completion`-adjacent increment, same single-dense-layer minimalism as `ContinueHead`,
-reading `(h_t, z_t)`, predicting the shared scalar reward `StepResult.reward`). Flagged here as the
-load-bearing prerequisite so the human's Gate G2 role-flip implementation doesn't discover it only
-after building `Actor`/`Critic` against this spec.
+used to have no source once a rollout left real environment steps and entered imagination —
+`env.step()` isn't called there, and only `RSSMCell.prior()` was. That gap is closed:
+`worldModel.rewardHead.predict(state.deterministic, state.stochastic)` supplies it, the same call
+the training-procedure sketch below now makes (mirroring how it already calls
+`worldModel.continueHead.predict(...)`). The actor-critic below can be fully specified
+(interfaces, gradient-separation invariant, training-loop shape) and, once `Actor`/`Critic`
+themselves exist (Gate G2 — still the only remaining blocker to exercising it end-to-end), has
+every world-model input it needs.
 
-**Superseded by `docs/explainers/0014-reward-head-spec.md`**: the symlog-transformed guess this
-line originally made — reasoning that `collisionPenalty` left the reward unbounded to a friendly
-range for a bare linear head — is corrected by `0014`'s re-derivation from
-`computeReward()` (`src/env/gridworld.ts:145-157`): every config this project runs bounds the
-reward to a fixed `[-4.0, 0.0]`, a single-order-of-magnitude range that doesn't warrant `symlog`.
-`0014` proposes a plain linear head instead — see its "Reward magnitude" section for the full
-derivation. Read as superseded, not as a still-open recommendation.
+**`0014`'s reward-magnitude correction**: the symlog-transformed guess this section originally
+made — reasoning that `collisionPenalty` left the reward unbounded to a friendly range for a bare
+linear head — is corrected by `0014`'s re-derivation from `computeReward()`
+(`src/env/gridworld.ts:145-157`): every config this project runs bounds the reward to a fixed
+`[-4.0, 0.0]`, a single-order-of-magnitude range that doesn't warrant `symlog`. The landed
+`RewardHead` is a plain linear head, per that derivation — see `0014`'s "Reward magnitude" section
+for the full derivation and its "Measured" addendum for a reproduced first-step loss breakdown.
 
 ## Architecture
 
@@ -121,8 +123,9 @@ export class Critic {
 
 ## Training procedure (imagination rollout)
 
-Sketch only — pseudocode, not a function signature to implement, since several steps depend on
-the not-yet-built reward head above:
+Sketch only — pseudocode, not a function signature to implement: `Actor`/`Critic` themselves
+don't exist yet (Gate G2 role-flip) — the reward head this sketch's `rewardsNumeric` step reads,
+`worldModel.rewardHead`, landed via PR #77 and no longer blocks it:
 
 ```
 function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, horizon, rng, gamma, lambda, entropyCoefficient):
@@ -143,7 +146,7 @@ function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, 
   // differentiates it" constraint WorldModel.step()'s own forward() closure already documents
   // (src/model/worldModel.ts:238-249), applied here to the actor/critic instead of the world
   // model.
-  { grads } = tf.variableGrads(() => {
+  { value, grads } = tf.variableGrads(() => {
     state = startState
     valueTensors = []; continueTensors = []; logProbs = []; entropies = []
     rewardsNumeric = []; valuesNumeric = []; continuesNumeric = []
@@ -158,7 +161,7 @@ function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, 
       nextDeterministic = worldModel.cell.step(state, action)
       priorDist = worldModel.cell.prior(nextDeterministic, { rng })
       state = { deterministic: nextDeterministic, stochastic: priorDist.sample }
-      rewardsNumeric.push(rewardHead.predict(state.deterministic, state.stochastic).dataSync()[0])   // rewardHead does not exist — see above; numeric from the start, same reasoning as values — computeLambdaReturns never sees a reward tensor
+      rewardsNumeric.push(worldModel.rewardHead.predict(state.deterministic, state.stochastic).dataSync()[0])   // worldModel.rewardHead landed via PR #77 (docs/explainers/0014) — numeric from the start, same reasoning as values — computeLambdaReturns never sees a reward tensor
       continueTensor = sigmoid(worldModel.continueHead.predict(state.deterministic, state.stochastic))
       continueTensors.push(continueTensor)                  // not otherwise used by any loss below, but kept alongside valueTensors for symmetry and any future continue-side loss term
       continuesNumeric.push(continueTensor.dataSync()[0])    // detached numeric copy — feeds computeLambdaReturns only
@@ -172,6 +175,7 @@ function imaginationTrainStep(worldModel, actor, critic, startState: RSSMState, 
     return actorLoss + criticLoss
   }, [...actor.trainableWeights(), ...critic.trainableWeights()])
   optimizer.applyGradients(grads)
+  tf.dispose(value); tf.dispose(grads)   // PR #25's leak class, both halves: this closure isn't wrapped in tf.tidy (it can't be — tf.variableGrads owns the tape), so its returned `value` and `grads` are real tensors nothing else frees; dispose both once applyGradients has consumed grads (PR #80 review, 2026-09-22)
 ```
 
 **Why REINFORCE, and not the earlier `-mean(returns)`**: `computeLambdaReturns` (`0012`) is pinned
@@ -237,10 +241,11 @@ before any actor-critic existed to violate it. Concretely, once `Actor`/`Critic`
    documents that reconstruction is fully out of the imagination path, not because it's expected
    to ever catch anything `cell`/`continueHead`'s checks wouldn't already catch first.
 
-This test cannot be written for real until `Actor`/`Critic` exist (Gate G2) and, per the
-blocking-dependency section above, until a reward head exists to make `imaginationTrainStep`
-actually runnable end-to-end — but every tensor set and assertion above is concrete now, so the
-implementation has a target rather than a restated goal name.
+This test cannot be written for real until `Actor`/`Critic` exist (Gate G2) — the reward head
+that used to be a second blocker here landed via PR #77 (`docs/explainers/0014`), so `Actor`/
+`Critic` are now the only missing piece for `imaginationTrainStep` to run end-to-end — but every
+tensor set and assertion above is concrete now, so the implementation has a target rather than a
+restated goal name.
 
 ## Open design questions (items 1–2 resolved below; 3–6 still proposed — 3–5 same status as `0012`'s four, 6 added this revision)
 
@@ -314,12 +319,14 @@ implementation has a target rather than a restated goal name.
 - **No implementation.** `Actor`/`Critic` are proposed interfaces only, same "spec only, Gate G2
   role-flip" status `0012` established for `ReplayBuffer`/`computeLambdaReturns` — nothing under
   `src/` changes in this increment.
-- **No reward head**, and no attempt to work around its absence (e.g. no proposal to bootstrap
-  λ-returns from ground-truth `StepResult.reward` alone during imagination — that would require
-  re-entering the real environment mid-rollout, which is not imagination).
-- **No wiring into `runEpisode`/`freeze.ts`.** Even once `Actor`/`Critic`/a reward head all
-  exist, threading an actor-critic policy through the freeze mechanism and Arm-A's metric
-  plumbing is its own future increment, out of this docs-only spec's scope.
+- **No reward-head design** — that was `0014`'s territory, and it landed via PR #77. This spec's
+  own scope stops at consuming `worldModel.rewardHead.predict()` as a black box, same as it
+  consumes `continueHead`/`decoder`, with no proposal to bootstrap λ-returns from ground-truth
+  `StepResult.reward` alone during imagination (that would require re-entering the real
+  environment mid-rollout, which is not imagination).
+- **No wiring into `runEpisode`/`freeze.ts`.** Even once `Actor`/`Critic` exist, threading an
+  actor-critic policy through the freeze mechanism and Arm-A's metric plumbing is its own future
+  increment, out of this docs-only spec's scope.
 - **Open questions 3–6 above are not decided** (1–2 were resolved by the human's PR #74 review,
   2026-09-13; 6 was added by the human's 2026-09-16 PR #74 review) — flagged so a future
   implementation and its review start from the same known-open list, matching `0012`'s own closing

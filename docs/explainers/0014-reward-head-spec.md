@@ -165,6 +165,7 @@ reviewer's own independent sweep, whose exact seed/action scheme wasn't preserve
 | quantity | median | max |
 | --- | --- | --- |
 | reward (raw, `[-4.0, 0.0]` bound) | −0.9375 | (min) −1.8750 |
+| `reconstructionLoss` | 0.8048 | 4.2313 |
 | `continueLoss` | 0.6834 | 0.9193 |
 | `rewardLoss` (normalized) | 0.0677 | 0.1792 |
 | `rewardLoss` (raw, unnormalized MSE) | 1.0827 | 2.8668 |
@@ -179,8 +180,10 @@ reviewer's own reported 0.50 — both are nonetheless the same order of magnitud
 
 **Conclusion, corrected from the original estimate above**: normalized `rewardLoss` runs
 O(0.01–0.1) — one order of magnitude *below* `continueLoss`'s O(0.1–1), not matching it as
-originally intended, and raw (unnormalized) MSE runs in the *same* order of magnitude as
-`continueLoss` (1.08 vs. 0.68, within ~1.6×), not "one to two orders above" it. The original
+originally intended, and raw (unnormalized) MSE runs in the *same* order of magnitude as both
+terms the original estimate compared it against — `continueLoss` (1.08 vs. 0.68, within ~1.6×)
+and `reconstructionLoss` (1.08 vs. 0.80, within ~1.35×) — not "one to two orders above" either.
+The original
 estimate's error: it reasoned from the range's worst case (`target²` up to `16` at the `−4.0`
 extreme), but actual — even first-step, freshly-reset — rewards run well inside that bound, so raw
 squared error never approaches the extreme the estimate anchored on. **Decision, unchanged**: keep
