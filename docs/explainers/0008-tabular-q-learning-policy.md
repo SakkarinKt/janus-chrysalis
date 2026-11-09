@@ -4,7 +4,7 @@
 the human in PR #42's review (@SakkarinKt, 2026-08-09): "a minimal trainable policy is in scope
 for priority 4 — build it as the next sub-increment (tabular Q-learning over the discrete action
 space is fine) before the 3-seed freeze-vs-both-frozen runs." Processes the "Decisions needed"
-item that same run's stand-up (`reports/standup/2026-08-09.md`) raised: `RandomPolicy` (the only
+item that same run's stand-up (`reports/standup/archive/2026-Q3/2026-08-09.md`) raised: `RandomPolicy` (the only
 existing `Policy`) has no `update()`, so proposal `0001`'s intervention condition — "prediction
 error should show this error *rising* as the still-training partner's policy drifts" — has no
 partner that can actually drift. This sub-increment closes that gap; it does not itself run the
