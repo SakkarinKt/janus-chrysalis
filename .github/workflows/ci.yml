@@ -54,6 +54,10 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25 # v24.0.0
         with:
           globs: '**/*.md'
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: package.json
       - name: Check run evidence is reachable
         run: node scripts/check-evidence-reachable.mjs
 
