@@ -36,3 +36,18 @@ explainers kept landing. Its actual merge condition, a human summary in `LEARNIN
 
 **Do differently.** Put the one human action at the top of every stand-up, and on quiet days
 say less.
+
+## 2026-11-09 — week 46 (interactive session, gap entry for weeks 40–45)
+
+**What went wrong in the process.** The routine was switched off on 2026-09-28 and has not run
+since, so weeks 40–45 have no entries. Its last six runs each opened a stand-up PR that nobody
+reviewed (PRs #81, #84–#87 and #89). One of them asked what to do with an empty priority list;
+the next four repeated that the question was unanswered. A report-per-run rule turned "nothing
+to do" into a review backlog.
+
+**Assumption that broke.** That a run commit recorded in a manifest stays reachable. PR #88 was
+squash-merged, which left the Gate G2 run commit on no branch, and PR #52's head survived only as
+a stale ref. Both are now held by `evidence/*` tags, and CI checks reachability.
+
+**Do differently.** On a quiet day, open no PR. Work from a queue that cannot run dry. Both need a
+`loop/GOAL.md` revision, which is the human's to make.
