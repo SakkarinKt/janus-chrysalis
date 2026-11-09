@@ -1,0 +1,3 @@
+# The results ledger is append-only, one JSON object per line. Two branches that each append a
+# line should merge to a file holding both lines, not conflict.
+experiments/ledger.jsonl merge=union

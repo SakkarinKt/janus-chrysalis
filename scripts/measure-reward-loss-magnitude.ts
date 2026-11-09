@@ -15,12 +15,25 @@
  * (`rewardLoss * rewardScale^2`, exact given `rewardLoss`'s division-before-squaring definition
  * — see `src/model/losses.ts`).
  *
- * Run with: node scripts/measure-reward-loss-magnitude.ts
+ * Run with: node scripts/measure-reward-loss-magnitude.ts [--scratch]
+ *
+ * Since 2026-11-09 the run is recorded, not just printed: it writes `samples.summary.csv` (one
+ * row per seed combo, full precision) and a `manifest.json` to
+ * `artifacts/reward-loss-magnitude/<runId>/`, so a number quoted from it has an artifact behind
+ * it. A recorded run needs a clean tree; `--scratch` writes under `artifacts/_scratch/` instead
+ * and runs on any tree. The measurement itself (seeds, draws, order) is unchanged.
  */
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CooperativeGridWorld } from "../src/env/gridworld.ts";
 import { WorldModel } from "../src/model/worldModel.ts";
 import { Action, DEFAULT_CONFIG } from "../src/env/types.ts";
 import { Rng, deriveSeed } from "../src/env/rng.ts";
+import { makeRunId } from "../src/experiment/harness.ts";
+import { canonicalJson, hashFile, hashFiles, sha256 } from "../src/experiment/provenance.ts";
+import { captureRunEnvironment, ensureRunDir, writeManifest } from "../src/experiment/telemetry.ts";
+import { tfjsInfo } from "../src/experiment/tfjsInfo.ts";
 
 const NUM_COMBOS = 24;
 const RSSM_CONFIG = { deterministicSize: 256, latentCategoricals: 8, latentClasses: 4 };
@@ -35,10 +48,19 @@ interface Sample {
   rewardLossRaw: number;
 }
 
+/** `items[index]`, or a thrown error where TypeScript only sees "possibly undefined". */
+function at<T>(items: readonly T[], index: number): T {
+  const item = items[index];
+  if (item === undefined) {
+    throw new Error(`index ${index} is out of range (length ${items.length})`);
+  }
+  return item;
+}
+
 function median(xs: number[]): number {
   const sorted = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return sorted.length % 2 === 0 ? (at(sorted, mid - 1) + at(sorted, mid)) / 2 : at(sorted, mid);
 }
 
 function runOneCombo(seed: number): Sample {
@@ -55,10 +77,7 @@ function runOneCombo(seed: number): Sample {
   const env = new CooperativeGridWorld({ ...DEFAULT_CONFIG, seed: envSeed });
   env.reset();
   const actionRng = new Rng(actionSeed);
-  const actions = [
-    ACTIONS[actionRng.nextInt(ACTIONS.length)],
-    ACTIONS[actionRng.nextInt(ACTIONS.length)],
-  ];
+  const actions = [at(ACTIONS, actionRng.nextInt(ACTIONS.length)), at(ACTIONS, actionRng.nextInt(ACTIONS.length))];
   const result = env.step(actions);
 
   const worldModel = new WorldModel({
@@ -69,8 +88,8 @@ function runOneCombo(seed: number): Sample {
   });
   const stepRng = new Rng(stepRngSeed);
   const stepResult = worldModel.step(
-    actions[0],
-    result.observations[0],
+    at(actions, 0),
+    at(result.observations, 0),
     stepRng,
     false,
     result.done,
@@ -86,6 +105,24 @@ function runOneCombo(seed: number): Sample {
     rewardLossNormalized: stepResult.rewardLoss,
     rewardLossRaw: stepResult.rewardLoss * env.rewardScale ** 2,
   };
+}
+
+const scratch = process.argv.slice(2).includes("--scratch");
+const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--scratch");
+if (unknownArgs.length > 0) {
+  console.error(`measure-reward-loss-magnitude: unknown argument(s) ${unknownArgs.join(" ")} (only --scratch is accepted)`);
+  process.exit(2);
+}
+
+// Captured before anything is written, so gitDirty describes the code and not this run's output.
+const root = fileURLToPath(new URL("..", import.meta.url));
+const env = captureRunEnvironment(tfjsInfo(), root);
+if (env.gitDirty && !scratch) {
+  console.error(
+    "measure-reward-loss-magnitude: the working tree has uncommitted or untracked files, so the recorded commit would not " +
+      "describe what ran. Commit first, or pass --scratch.",
+  );
+  process.exit(1);
 }
 
 const samples: Sample[] = [];
@@ -113,3 +150,40 @@ console.log(`reconstructionLoss: median=${median(reconstructionLosses).toFixed(4
 console.log(`continueLoss: median=${median(continueLosses).toFixed(4)}, max=${Math.max(...continueLosses).toFixed(4)}`);
 console.log(`rewardLoss (normalized): median=${median(normalized).toFixed(4)}, max=${Math.max(...normalized).toFixed(4)}`);
 console.log(`rewardLoss (raw MSE): median=${median(raw).toFixed(4)}, max=${Math.max(...raw).toFixed(4)}`);
+
+// --- Record the run -----------------------------------------------------------------------
+
+const RUN_NAME = "reward-loss-magnitude";
+const runId = makeRunId(env.createdAt, env.gitCommit);
+const outDir = join(root, "artifacts", ...(scratch ? ["_scratch"] : []), RUN_NAME, runId);
+ensureRunDir(outDir);
+
+const COLUMNS = ["seed", "reward", "reconstructionLoss", "continueLoss", "rewardLossNormalized", "rewardLossRaw"] as const;
+writeFileSync(
+  join(outDir, "samples.summary.csv"),
+  `${COLUMNS.join(",")}\n${samples.map((s) => COLUMNS.map((column) => s[column]).join(",")).join("\n")}\n`,
+);
+
+const config = { combos: NUM_COMBOS, rssm: RSSM_CONFIG, envConfig: "DEFAULT_CONFIG", train: false, agent: 0 };
+const scriptPath = fileURLToPath(import.meta.url);
+writeManifest(outDir, {
+  schemaVersion: 2,
+  runId,
+  script: "scripts/measure-reward-loss-magnitude.ts",
+  scriptSha256: hashFile(scriptPath),
+  scratch,
+  command: `node scripts/measure-reward-loss-magnitude.ts${scratch ? " --scratch" : ""}`,
+  env,
+  config,
+  configSha256: sha256(canonicalJson(config)),
+  seeds: samples.map((s) => s.seed),
+  resultSummary: {
+    reward: { median: median(rewards), min: Math.min(...rewards), max: Math.max(...rewards) },
+    reconstructionLoss: { median: median(reconstructionLosses), max: Math.max(...reconstructionLosses) },
+    continueLoss: { median: median(continueLosses), max: Math.max(...continueLosses) },
+    rewardLossNormalized: { median: median(normalized), max: Math.max(...normalized) },
+    rewardLossRaw: { median: median(raw), max: Math.max(...raw) },
+  },
+  files: hashFiles(outDir),
+});
+console.log(`\nRecorded: ${join("artifacts", ...(scratch ? ["_scratch"] : []), RUN_NAME, runId, "manifest.json")}`);

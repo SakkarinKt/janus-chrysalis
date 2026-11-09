@@ -1,0 +1,35 @@
+{
+  "id": "0000",
+  "title": "Canary: the Gate G2 loss curve still reproduces at HEAD",
+  "hypothesis": "Re-running the Gate G2 loss-curve experiment at HEAD regenerates the committed loss-curve.summary.csv to within float round-off. If it does not, a code change altered a seeded stream or the training numerics, and every number produced after that change is on a different stream from every number before it.",
+  "kind": "repro",
+  "config": {
+    "reproOf": "legacy:2026-09-23-g2-loss-curve",
+    "reference": "artifacts/2026-09-23-g2-loss-curve/loss-curve.summary.csv",
+    "episodes": 20,
+    "horizon": 75,
+    "rssm": { "deterministicSize": 256, "latentCategoricals": 8, "latentClasses": 4 },
+    "policy": "RandomPolicy for both agents",
+    "freeze": "none: both world models train on every step",
+    "toleranceBasis": {
+      "why": "The reference was produced in the loop's sandbox; CI runs on a different CPU. tfjs-node's oneDNN kernels order float operations differently per CPU, so the two are not bit-identical even with identical code and seeds.",
+      "observedCrossMachineDifferences": [4.71373399202335e-8, 7.500426835134815e-8],
+      "observedIn": "Two CI runs on GitHub ubuntu-latest, 2026-11-09 (42657621834, then 42658993424), with src/ identical to the reference run's commit. In the first, 476 of 600 loss cells differed, none by more than 4.71e-8. The second, on another runner, reached 7.50e-8: the round-off varies from runner to runner.",
+      "smallestCrossSeedDifference": 4.519994088203298e-5,
+      "medianCrossSeedDifference": 0.0159,
+      "crossSeedBasis": "Between the reference's own seeds (1001, 1002, 1003), compared cell by cell over the four non-constant loss columns: no cell of 160 per pair is within 1e-6. The median above is the lowest of the three pairwise medians. A different seeded stream therefore fails this card on every cell, not marginally.",
+      "chosen": "1e-6: about 13 times the largest machine round-off observed so far and about 45 times below the smallest difference between two streams. If a runner ever exceeds it while far below 4.5e-5, that is round-off on a new CPU, to be handled with a new canary card and a wider stated tolerance, not by editing this one."
+    }
+  },
+  "seeds": [1001, 1002, 1003],
+  "primaryMetric": "maxDifference",
+  "secondaryMetrics": ["identical", "mismatchCount"],
+  "decisionRule": {
+    "text": "Pass if the regenerated loss-curve.summary.csv has the same rows and columns as the committed reference and every numeric cell is within maxDifference of it, where the difference between a and b is |a - b| / max(1, |a|, |b|). A NaN halt is a fail. The tolerance and the measurements it rests on are in config.toleranceBasis.",
+    "thresholds": { "maxDifference": 0.000001 }
+  },
+  "onFail": "Find the commit that changed the stream: git bisect with `npm run exp -- 0000 --scratch --require-pass`. If the change was intended, say so in the PR that makes it and add a new canary card with a new reference. Do not edit this card or its reference.",
+  "dependsOn": [],
+  "budget": { "maxWallMinutes": 15 },
+  "supersedes": null
+}

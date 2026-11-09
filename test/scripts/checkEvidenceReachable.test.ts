@@ -146,6 +146,23 @@ test("fails on a manifest with no gitCommit, on one citing a commit absent from 
   });
 });
 
+test("manifests under artifacts/_scratch are not evidence and are skipped, even when they cite an orphaned commit", () => {
+  withRepo((repo) => {
+    const onMain = repo.commit("first");
+    const orphan = orphanCommit(repo);
+    repo.writeManifest("run-a", { gitCommit: onMain });
+    repo.writeManifest("_scratch/0001-card/some-run", { schemaVersion: 2, env: { gitCommit: orphan } });
+
+    const result = repo.check();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /1 manifests, 1 distinct commits/);
+
+    // Only the top-level artifacts/_scratch is special: a run directory merely named _scratch is checked.
+    repo.writeManifest("run-b/_scratch", { gitCommit: orphan });
+    assert.equal(repo.check().status, 1);
+  });
+});
+
 test("exits 2, not 0, when it cannot check at all (no artifacts directory, or an unresolvable base ref)", () => {
   withRepo((repo) => {
     repo.commit("first");

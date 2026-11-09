@@ -9,7 +9,10 @@
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "typecheck:ratchet": "node scripts/typecheck-ratchet.mjs"
+    "typecheck:ratchet": "node scripts/typecheck-ratchet.mjs",
+    "typecheck:harness": "node scripts/typecheck-harness.mjs",
+    "exp": "node scripts/exp.ts",
+    "repro": "node scripts/repro.ts"
   },
   "dependencies": {
     "@tensorflow/tfjs-node": "4.22.0"

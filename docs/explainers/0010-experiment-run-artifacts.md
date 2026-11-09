@@ -98,3 +98,25 @@ custom file name).
   own branch. Filenames don't collide either way (different basenames), so this is a courtesy
   against later renumbering churn, not a correctness requirement — recorded under "Assumptions
   made" in this run's stand-up.
+
+## Addendum 2026-11-09: the schema this note deferred now exists
+
+"No manifest schema" was right for eleven hand-written scripts. It stopped being right once the
+missing fields cost something: no manifest recorded whether the tree was dirty, which lockfile
+or tfjs version ran, or on what platform, and two recorded commits were found on no branch.
+
+What changed, and where to read it:
+
+- **Manifest v2** (`RunManifest`, `src/experiment/harness.ts`) is the fixed shape for every run
+  made through `npm run exp` or `npm run repro`. It adds the card and its hash, a dirty flag,
+  lockfile hash, tfjs version, platform, a config hash, and a hash of every output file.
+- **`captureRunEnvironment` takes what it should know about tfjs as an argument** and no longer
+  imports it. `src/experiment/tfjsInfo.ts` reads it. The harness's bookkeeping process never
+  builds a model, so it can now use these helpers where the native binding is not installed.
+- **`writeTelemetry` and `writeManifest` join paths** instead of concatenating, so a directory
+  works with or without a trailing separator.
+- **The existing `run.ts` scripts are still untouched**, for the reason given above. Their v1
+  manifests stay as written; `npm run repro -- <manifest> --at-commit` re-runs them at their
+  recorded commit.
+
+`experiments/README.md` describes the workflow.
