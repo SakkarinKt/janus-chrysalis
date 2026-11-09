@@ -1,39 +1,60 @@
-import { execSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import tf from "@tensorflow/tfjs-node";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gitState, hashFile } from "./provenance.ts";
 
 /**
- * The run-identity fields every `experiments/*\/run.ts` script since
- * `2026-08-12-arm-a-instrument-validation` has independently reconstructed
- * (git commit, Node version, tfjs backend, a timestamp) before writing its
- * own ad hoc `manifest.json` — first extracted here (`loop/GOAL.md`
- * priority 5, "JSONL telemetry + manifest.json per run"). See
- * `docs/explainers/0010-experiment-run-artifacts.md` for why this only
- * factors out the shared shell, not a fixed manifest schema, and why
- * existing `run.ts` scripts are left untouched.
+ * Run identity and the run-artifact writing conventions. First extracted for `loop/GOAL.md`
+ * priority 5 ("JSONL telemetry + manifest.json per run") from the shell every
+ * `experiments/*\/run.ts` script had reconstructed inline; see
+ * `docs/explainers/0010-experiment-run-artifacts.md`.
+ *
+ * Revised 2026-11-09 for the experiment harness (`scripts/exp.ts`): the environment now records
+ * everything manifest v2 needs to say *what* ran (dirty flag, lockfile hash, tfjs version,
+ * platform), and this module no longer imports tfjs. The caller passes what it knows about tfjs
+ * (`src/experiment/tfjsInfo.ts` reads it), so the harness's bookkeeping process, which never
+ * builds a model, can use these helpers without the native binding installed.
  */
+
+/** What `src/experiment/tfjsInfo.ts` reports. `null` where a run did not load tfjs at all. */
+export interface TfjsInfo {
+  /** The tfjs-node package version, e.g. `"4.22.0"`. */
+  version: string;
+  /** `tf.getBackend()` — which backend actually served the run's ops. */
+  backend: string;
+}
+
 export interface RunEnvironment {
-  /** `git rev-parse HEAD`, trimmed. Throws if not run inside a git checkout. */
+  /** `git rev-parse HEAD`. Throws if not run inside a git checkout. */
   gitCommit: string;
+  /** True if the work tree had any modified, staged or untracked file when captured. */
+  gitDirty: boolean;
   /** `process.version`, e.g. `"v22.18.0"`. */
   nodeVersion: string;
-  /** `tf.getBackend()` — which tfjs backend actually served this run's ops. */
-  tfjsBackend: string;
-  /** `new Date().toISOString()`, captured once, at call time — not per-record. */
+  tfjsVersion: string | null;
+  tfjsBackend: string | null;
+  /** `process.platform` and `process.arch`: float results are only expected to match within one pair. */
+  platform: string;
+  arch: string;
+  /** SHA-256 of `package-lock.json`, or `null` if the checkout has none. */
+  lockfileSha256: string | null;
+  /** `new Date().toISOString()`, captured once, at call time. */
   createdAt: string;
 }
 
 /**
- * Captures the four fields that identify *what ran*, independent of what
- * the run itself measured. Every existing experiment script calls the
- * equivalent of this inline, once, near the top of `main()`; this is that
- * pattern with one call site instead of eleven.
+ * Captures what identifies *what ran*, independent of what the run measured. Call it before the
+ * run writes anything: `gitDirty` is meant to describe the code, not the run's own outputs.
  */
-export function captureRunEnvironment(): RunEnvironment {
+export function captureRunEnvironment(tfjs: TfjsInfo | null, cwd: string = process.cwd()): RunEnvironment {
+  const lockfile = join(cwd, "package-lock.json");
   return {
-    gitCommit: execSync("git rev-parse HEAD").toString().trim(),
+    ...gitState(cwd),
     nodeVersion: process.version,
-    tfjsBackend: tf.getBackend(),
+    tfjsVersion: tfjs?.version ?? null,
+    tfjsBackend: tfjs?.backend ?? null,
+    platform: process.platform,
+    arch: process.arch,
+    lockfileSha256: existsSync(lockfile) ? hashFile(lockfile) : null,
     createdAt: new Date().toISOString(),
   };
 }
@@ -44,34 +65,22 @@ export function ensureRunDir(dir: string): void {
 }
 
 /**
- * Writes `records` as JSON Lines (one `JSON.stringify`d record per line) to
- * `${dir}${fileName}`, and returns `fileName` — meant to be stored verbatim
- * as a manifest's `telemetryFile` field, so the manifest and the file it
- * points at can't name-drift apart. `dir` must already exist (see
- * `ensureRunDir`) and end with a trailing separator, matching every
- * existing call site's `${artifactsDir}seed-${seed}-${condition}/` style.
+ * Writes `records` as JSON Lines (one `JSON.stringify`d record per line) to `fileName` inside
+ * `dir`, and returns `fileName` — meant to be stored verbatim as a manifest's `telemetryFile`
+ * field, so the manifest and the file it points at can't name-drift apart. `dir` must already
+ * exist (see `ensureRunDir`); a trailing separator is accepted but not required.
  */
-export function writeTelemetry(
-  dir: string,
-  records: readonly unknown[],
-  fileName = "telemetry.jsonl",
-): string {
+export function writeTelemetry(dir: string, records: readonly unknown[], fileName = "telemetry.jsonl"): string {
   const body = records.map((record) => JSON.stringify(record)).join("\n") + "\n";
-  writeFileSync(`${dir}${fileName}`, body);
+  writeFileSync(join(dir, fileName), body);
   return fileName;
 }
 
 /**
- * Writes `manifest` as pretty-printed JSON to `${dir}${fileName}`. Doesn't
- * impose a manifest shape — every run's manifest fields differ (seed,
- * condition, model config, result summary, findings, ...) — only the
- * writing convention (2-space indent, trailing newline) that every existing
- * script already used, but reimplemented.
+ * Writes `manifest` as pretty-printed JSON (2-space indent, trailing newline) to `fileName`
+ * inside `dir`. Imposes no shape: the harness's manifest v2 (`src/experiment/harness.ts`) and
+ * one-off measurement scripts both go through here.
  */
-export function writeManifest(
-  dir: string,
-  manifest: Record<string, unknown>,
-  fileName = "manifest.json",
-): void {
-  writeFileSync(`${dir}${fileName}`, JSON.stringify(manifest, null, 2) + "\n");
+export function writeManifest(dir: string, manifest: Record<string, unknown>, fileName = "manifest.json"): void {
+  writeFileSync(join(dir, fileName), JSON.stringify(manifest, null, 2) + "\n");
 }

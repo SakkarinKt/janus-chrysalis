@@ -9,6 +9,8 @@ artifacts/**
 !artifacts/**/
 !artifacts/**/manifest.json
 !artifacts/**/*.summary.csv
+# Scratch runs (`npm run exp -- <card> --scratch`) and the harness's staging area: never committed.
+artifacts/_scratch/
 
 # Local scratch
 .DS_Store
