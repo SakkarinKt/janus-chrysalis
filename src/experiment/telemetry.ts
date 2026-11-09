@@ -23,10 +23,26 @@ export interface TfjsInfo {
   backend: string;
 }
 
+/**
+ * What recording a run writes: new files under `artifacts/`, and one more line in the ledger.
+ * These are results, not the code that produced them, so they do not count as a dirty tree.
+ * Without this, a second run could not be recorded from the same commit as the first: the first
+ * run's outputs would have to be committed in between, and the second run would then execute at
+ * a commit that is not on the base branch (which the pre-registration check rejects).
+ *
+ * Only *new* files under `artifacts/` are exempt. Editing or deleting a committed artifact still
+ * makes the tree dirty.
+ */
+export const RECORDED_OUTPUT_DIRS = ["artifacts"] as const;
+export const RECORDED_OUTPUT_FILES = ["experiments/ledger.jsonl"] as const;
+
 export interface RunEnvironment {
   /** `git rev-parse HEAD`. Throws if not run inside a git checkout. */
   gitCommit: string;
-  /** True if the work tree had any modified, staged or untracked file when captured. */
+  /**
+   * True if the work tree had a modified, staged or untracked file when captured, other than
+   * not-yet-committed recorded results (`RECORDED_OUTPUT_DIRS`, `RECORDED_OUTPUT_FILES`).
+   */
   gitDirty: boolean;
   /** `process.version`, e.g. `"v22.18.0"`. */
   nodeVersion: string;
@@ -48,7 +64,7 @@ export interface RunEnvironment {
 export function captureRunEnvironment(tfjs: TfjsInfo | null, cwd: string = process.cwd()): RunEnvironment {
   const lockfile = join(cwd, "package-lock.json");
   return {
-    ...gitState(cwd),
+    ...gitState(cwd, { allowUntrackedUnder: RECORDED_OUTPUT_DIRS, allowChangesTo: RECORDED_OUTPUT_FILES }),
     nodeVersion: process.version,
     tfjsVersion: tfjs?.version ?? null,
     tfjsBackend: tfjs?.backend ?? null,

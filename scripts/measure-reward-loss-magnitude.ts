@@ -119,8 +119,8 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const env = captureRunEnvironment(tfjsInfo(), root);
 if (env.gitDirty && !scratch) {
   console.error(
-    "measure-reward-loss-magnitude: the working tree has uncommitted or untracked files, so the recorded commit would not " +
-      "describe what ran. Commit first, or pass --scratch.",
+    "measure-reward-loss-magnitude: the working tree has uncommitted or untracked files (other than recorded results under " +
+      "artifacts/ and the ledger), so the recorded commit would not describe what ran. Commit first, or pass --scratch.",
   );
   process.exit(1);
 }

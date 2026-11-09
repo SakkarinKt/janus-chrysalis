@@ -116,24 +116,93 @@ export function hashDir(dir: string): string {
   return hashFileSet(hashFiles(dir));
 }
 
+/**
+ * `hashDir` computed from git objects: the hash `dir` (a repo-relative POSIX path) had at
+ * `commit`, without checking anything out. Same file set (dotfiles skipped) and same line format
+ * as `hashDir`, so for a tracked, unmodified directory the two agree. `cwd` must be the
+ * repository root. Returns `null` if the directory has no files at that commit.
+ */
+export function hashDirAtCommit(commit: string, dir: string, cwd: string = process.cwd()): string | null {
+  const prefix = `${dir.replace(/\/+$/, "")}/`;
+  const listing = execFileSync("git", ["ls-tree", "-r", "-z", "--name-only", commit, "--", prefix], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const files: FileHash[] = listing
+    .split("\0")
+    .filter((path) => path.startsWith(prefix))
+    .map((path) => path.slice(prefix.length))
+    .filter((relative) => !relative.split("/").some((segment) => segment.startsWith(".")))
+    .map((relative) => ({
+      path: relative,
+      sha256: sha256(execFileSync("git", ["cat-file", "blob", `${commit}:${prefix}${relative}`], { cwd, stdio: ["ignore", "pipe", "pipe"] })),
+    }));
+  return files.length === 0 ? null : hashFileSet(files);
+}
+
 export interface GitState {
   /** `git rev-parse HEAD`. */
   gitCommit: string;
   /**
-   * True if `git status --porcelain` reports anything: a modified, staged or untracked file.
-   * Ignored files do not count, so gitignored run outputs never make a tree dirty.
+   * True if `git status --porcelain` reports a modified, staged or untracked file, other than
+   * the exemptions in `GitStateOptions`. Ignored files never count.
    */
   gitDirty: boolean;
+}
+
+export interface GitStateOptions {
+  /**
+   * Directories (repo-relative, POSIX, no trailing slash) under which a *new* file (untracked,
+   * or staged but never committed) does not make the tree dirty. A modified or deleted
+   * committed file there still does.
+   */
+  allowUntrackedUnder?: readonly string[];
+  /** Files (repo-relative, POSIX) whose modification, or first appearance, does not make the tree dirty. */
+  allowChangesTo?: readonly string[];
 }
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-/** Throws if `cwd` is not inside a git work tree. */
-export function gitState(cwd: string = process.cwd()): GitState {
-  return {
-    gitCommit: git(["rev-parse", "HEAD"], cwd),
-    gitDirty: git(["status", "--porcelain"], cwd) !== "",
-  };
+/**
+ * The current commit and whether the work tree is dirty. Throws if `cwd` is not inside a git
+ * work tree.
+ *
+ * The options exist for one caller: the harness. A recorded run writes new files under
+ * `artifacts/` and appends a line to the ledger, and those must not make the *next* run look
+ * dirty, or two runs could never be recorded from the same commit. What they describe is
+ * results, not the code that produced them.
+ */
+export function gitState(cwd: string = process.cwd(), options: GitStateOptions = {}): GitState {
+  const allowUntrackedUnder = options.allowUntrackedUnder ?? [];
+  const allowChangesTo = options.allowChangesTo ?? [];
+  // -z: NUL-separated "XY path" records with no quoting; a rename adds one extra record holding
+  // the original path, which starts with neither a status nor a space-padded prefix we rely on.
+  const records = execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    .split("\0")
+    .filter((record) => record !== "");
+  let dirty = false;
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index] ?? "";
+    const status = record.slice(0, 2);
+    const path = record.slice(3);
+    if (status.startsWith("R") || status.startsWith("C")) {
+      index += 1; // skip the rename/copy source record
+      dirty = true;
+      continue;
+    }
+    // "New" covers untracked and staged-but-never-committed; "changed" adds modifications, staged or not.
+    const isNew = status === "??" || status === "A " || status === "AM";
+    const isChanged = isNew || status === " M" || status === "M " || status === "MM";
+    if (isNew && allowUntrackedUnder.some((dir) => path === `${dir}/` || path.startsWith(`${dir}/`))) {
+      continue;
+    }
+    if (isChanged && allowChangesTo.includes(path)) {
+      continue;
+    }
+    dirty = true;
+  }
+  return { gitCommit: git(["rev-parse", "HEAD"], cwd), gitDirty: dirty };
 }

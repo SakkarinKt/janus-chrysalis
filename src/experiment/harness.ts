@@ -232,8 +232,8 @@ export function executeCard(
   const env = captureRunEnvironment(null, paths.root);
   if (options.mode !== "scratch" && env.gitDirty) {
     throw new HarnessError(
-      "the working tree has uncommitted or untracked files, so the recorded commit would not describe what ran. " +
-        "Commit first, or use --scratch.",
+      "the working tree has uncommitted or untracked files (other than recorded results under artifacts/ and the ledger), " +
+        "so the recorded commit would not describe what ran. Commit first, or use --scratch.",
     );
   }
   const dependencies = resolveDependencies(card, ledger, paths);

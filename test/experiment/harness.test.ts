@@ -159,6 +159,36 @@ test("a recorded run is refused on a dirty tree, and nothing is written", () => 
   });
 });
 
+test("several runs can be recorded from one commit: a run's own not-yet-committed outputs do not make the tree dirty", () => {
+  withSession(({ repo, paths, run }) => {
+    repo.writeCard("0001-first", {});
+    repo.writeCard("0002-second", { dependsOn: [{ card: "0001", verdict: "pass" }] });
+    const commit = repo.commitAll("add cards");
+
+    const first = run("0001");
+    const second = run("0002"); // nothing committed in between
+
+    for (const outcome of [first, second]) {
+      assert.equal(outcome.manifest.env.gitCommit, commit);
+      assert.equal(outcome.manifest.env.gitDirty, false);
+    }
+    assert.equal(readLedger(paths.ledgerPath).length, 2);
+  });
+});
+
+test("editing a committed artifact does make the tree dirty: results are exempt only while they are new", () => {
+  withSession(({ repo, run }) => {
+    repo.writeCard("0001-first", {});
+    repo.writeCard("0002-second", {});
+    repo.commitAll("add cards");
+    const first = run("0001");
+    repo.commitAll("commit the first result");
+
+    writeFileSync(join(first.outDir, "values.summary.csv"), "seed,value\n1,999\n");
+    assertRefused(() => run("0002"), /uncommitted or untracked files \(other than recorded results/);
+  });
+});
+
 test("a scratch run works on a dirty tree, may override seeds, records the dirty flag, and never touches the ledger", () => {
   withSession(({ repo, paths, run }) => {
     repo.writeCard("0001-fixture", {});

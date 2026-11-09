@@ -41,6 +41,13 @@ name: CI
 # branch nor held by an `evidence/*` tag. It needs full history and tags,
 # hence `fetch-depth: 0` on that job's checkout. It sits in `lint` because
 # `lint` is the required check.
+#
+# Pre-registration (2026-11-09): `lint` also runs
+# `scripts/check-preregistration.ts`. Relative to the base, the results
+# ledger, the merged cards and the committed artifacts may only grow, and
+# each new result must have been run from a clean tree at a commit already
+# on the base (`experiments/cards/README.md`, "What CI enforces"). It is a
+# TypeScript file run directly by Node, which needs no install step.
 
 on:
   pull_request:
@@ -72,6 +79,10 @@ jobs:
           node-version-file: package.json
       - name: Check run evidence is reachable
         run: node scripts/check-evidence-reachable.mjs
+      - name: Check pre-registration (ledger, cards and artifacts only grow; results ran on the base)
+        # On a pull request the base is the branch being merged into. On a push it is the
+        # commit the branch pointed at before the push.
+        run: node scripts/check-preregistration.ts --base "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}"
 
   test:
     name: test

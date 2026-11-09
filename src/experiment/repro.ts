@@ -230,7 +230,10 @@ function reproduceLegacyRun(
 
   const env = captureRunEnvironment(null, paths.root);
   if (!options.scratch && env.gitDirty) {
-    throw new HarnessError("the working tree has uncommitted or untracked files. Commit first, or use --scratch.");
+    throw new HarnessError(
+      "the working tree has uncommitted or untracked files (other than recorded results under artifacts/ and the ledger). " +
+        "Commit first, or use --scratch.",
+    );
   }
   const scriptSha256 = sha256(execFileSync("git", ["show", `${commit}:${script}`], { cwd: paths.root }));
   const stdio = options.stdio ?? "inherit";
