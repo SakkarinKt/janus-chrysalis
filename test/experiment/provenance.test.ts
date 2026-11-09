@@ -109,6 +109,55 @@ test("gitState: clean after a commit; dirty for a modified, a staged and an untr
   }
 });
 
+test("gitState options: new files under an allowed directory and changes to an allowed file are not dirty, staged or not", () => {
+  const repo = makeFixtureRepo();
+  const options = { allowUntrackedUnder: ["artifacts"], allowChangesTo: ["experiments/ledger.jsonl"] };
+  try {
+    repo.write("artifacts/old-run/manifest.json", "{}");
+    repo.commitAll("base");
+
+    repo.write("artifacts/new-run/manifest.json", "{}");
+    repo.write("experiments/ledger.jsonl", '{"a":1}\n');
+    assert.equal(gitState(repo.root).gitDirty, true, "without options these are ordinary changes");
+    assert.equal(gitState(repo.root, options).gitDirty, false, "untracked artifact + modified ledger");
+
+    repo.git("add", "--all");
+    assert.equal(gitState(repo.root, options).gitDirty, false, "the same, staged");
+    repo.write("experiments/ledger.jsonl", '{"a":1}\n{"b":2}\n');
+    assert.equal(gitState(repo.root, options).gitDirty, false, "staged and then modified again");
+  } finally {
+    repo.dispose();
+  }
+});
+
+test("gitState options: editing or deleting a committed file under an allowed directory is still dirty, and so is anything outside", () => {
+  const repo = makeFixtureRepo();
+  const options = { allowUntrackedUnder: ["artifacts"], allowChangesTo: ["experiments/ledger.jsonl"] };
+  try {
+    repo.write("artifacts/old-run/manifest.json", "{}");
+    repo.write("src/code.ts", "export {};\n");
+    repo.commitAll("base");
+    assert.equal(gitState(repo.root, options).gitDirty, false);
+
+    repo.write("artifacts/old-run/manifest.json", '{ "edited": true }');
+    assert.equal(gitState(repo.root, options).gitDirty, true, "modified committed artifact");
+    repo.git("checkout", "--", "artifacts/old-run/manifest.json");
+
+    rmSync(join(repo.root, "artifacts/old-run/manifest.json"));
+    assert.equal(gitState(repo.root, options).gitDirty, true, "deleted committed artifact");
+    repo.git("checkout", "--", "artifacts/old-run/manifest.json");
+
+    repo.write("artifacts-elsewhere/file.txt", "a directory that merely shares the prefix");
+    assert.equal(gitState(repo.root, options).gitDirty, true, "prefix lookalike");
+    rmSync(join(repo.root, "artifacts-elsewhere"), { recursive: true });
+
+    repo.write("src/code.ts", "export const changed = true;\n");
+    assert.equal(gitState(repo.root, options).gitDirty, true, "code change");
+  } finally {
+    repo.dispose();
+  }
+});
+
 test("gitState: throws outside a git work tree", () => {
   const dir = mkdtempSync(join(tmpdir(), "janus-not-a-repo-"));
   assert.throws(() => gitState(dir));
