@@ -9,16 +9,26 @@ name: CI
 # 2026-07-16 stand-up for the human to action).
 #
 # `typecheck` (PR #29 review, 2026-07-29) runs `tsc --noEmit` pinned to the
-# now-declared `typescript`/`@types/node` devDependencies. 43 pre-existing
+# now-declared `typescript`/`@types/node` devDependencies. The pre-existing
 # in-repo errors (mostly noUncheckedIndexedAccess strictness) aren't fixed by
 # this change, so the step doesn't hard-fail on the full raw count yet.
 # Instead it runs `typecheck:ratchet` (PR #30 review, 2026-07-29), which
 # prints the same tsc output but only fails the step if the in-repo count
-# rises above that baseline of 43 — so it gates regressions without blocking
-# on the pre-existing backlog. Promote to gating on the raw `tsc` exit code
-# once that backlog is cleared. Coverage note: `tsconfig.json`'s `include` is
-# `["src", "test"]`, so this step (and its 43 baseline) does not check
-# `experiments/` at all — that dir needs its own spot-check.
+# rises above the baseline — so it gates regressions without blocking on the
+# pre-existing backlog. The baseline lives in one place,
+# `scripts/typecheck-ratchet.mjs` (`BASELINE_IN_REPO_ERRORS`, 44 since
+# 2026-08-06); read it there rather than trusting a number in a comment.
+# Promote to gating on the raw `tsc` exit code once that backlog is cleared.
+# Coverage note: `tsconfig.json`'s `include` is `["src", "test"]`, so this
+# step does not check `experiments/` at all — that dir needs its own
+# spot-check.
+#
+# Evidence reachability (2026-11-09): the `lint` job also runs
+# `scripts/check-evidence-reachable.mjs`, which fails if any
+# `artifacts/**/manifest.json` cites a git commit that is neither on the base
+# branch nor held by an `evidence/*` tag. It needs full history and tags,
+# hence `fetch-depth: 0` on that job's checkout. It sits in `lint` because
+# `lint` is the required check.
 
 on:
   pull_request:
@@ -36,10 +46,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Full history and tags: check-evidence-reachable needs commit ancestry.
+          fetch-depth: 0
+          fetch-tags: true
       - name: Lint Markdown
         uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25 # v24.0.0
         with:
           globs: '**/*.md'
+      - name: Check run evidence is reachable
+        run: node scripts/check-evidence-reachable.mjs
 
   test:
     name: test
