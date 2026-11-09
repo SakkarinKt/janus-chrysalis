@@ -27,9 +27,12 @@ name: CI
 #
 # `canary` (2026-11-09) re-runs the Gate G2 loss curve through the harness
 # (`npm run exp -- 0000`) and fails if the regenerated summary differs from
-# the committed one. It catches a change to a seeded stream or to training
-# numerics that no unit test pins. It runs as a scratch run: nothing it
-# produces is committed. About three minutes.
+# the committed one by more than the card's tolerance (1e-6; machine
+# round-off between the reference's machine and this runner measured 4.7e-8,
+# while two different seeded streams differ by 4.5e-5 at the very least).
+# It catches a change to a seeded stream or to training numerics that no
+# unit test pins. It runs as a scratch run: nothing it produces is
+# committed. About two minutes.
 #
 # Evidence reachability (2026-11-09): the `lint` job also runs
 # `scripts/check-evidence-reachable.mjs`, which fails if any
